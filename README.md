@@ -13,6 +13,8 @@ Don't forget to grab your own OpenAI API key, OpenAI Organization key, and your 
 For easy setup, set the bot permission as `Administrator` in the Discord Developer Portal. (It's safe, supposedly).
 
 ## How to use
+**Don't forget** to add your user ID to `whitelist.json`.
+
 To "summon" Ai-chan, use `ai!` prefix.
 
 **Experimental:** use `aireset!` to reset last response, cut context, and save token!
@@ -20,6 +22,7 @@ To "summon" Ai-chan, use `ai!` prefix.
 ## Features
 - Showing how much token is used
 - Showing calculated cost of the API request.
+- Whitelist using user ID, **NOT** Discord tag. (Because you pay for the API, I think this is a good thing to have a little protection preventing random people from using Ai-chan).
 
 ## Some disclaimers
 - Ai-chan can only follow the context of your last chat, not the chat before that.
