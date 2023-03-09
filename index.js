@@ -30,7 +30,7 @@ client.on('messageCreate', async function(message){
 
         if(message.author.bot || !message.content.startsWith("ai!") && !message.content.startsWith("Ai!") && !message.content.startsWith("AI!") || message.content == ("ai!")) return;
         if(!whitelist.list.includes(message.author.id)){
-            message.reply(`You're not authorized to use me. Please contact Kayfa for more info.`);
+            message.reply(`You're not authorized to use me.`);
             return;
         }
 
