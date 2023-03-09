@@ -14,6 +14,7 @@ For easy setup, set the bot permission as `Administrator` in the Discord Develop
 
 ## How to use
 To "summon" Ai-chan, use `ai!` prefix.
+
 **Experimental:** use `aireset!` to reset last response, cut context, and save token!
 
 ## Features
