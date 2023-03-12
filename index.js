@@ -22,9 +22,9 @@ var lastResponse = "";
 
 client.on('messageCreate', async function(message){
     try {
-        if(message.content == "aireset!"){
+        if(message.content.length > 1000){
             lastResponse = "";
-            message.reply("Ai-chan last respond has been reset.");
+            console.log("Ai-chan last respond has been reset.");
             return;
         }
 
