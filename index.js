@@ -22,13 +22,19 @@ var lastResponse = "";
 
 client.on('messageCreate', async function(message){
     try {
-        if(message.content.length > 1000){
+        if(lastResponse.length > 1000){
             lastResponse = "";
-            console.log("Ai-chan last respond has been reset.");
+            console.log("Ai-chan's last respond has been reset.");
             return;
         }
 
-        if(message.author.bot || !message.content.startsWith("ai!") && !message.content.startsWith("Ai!") && !message.content.startsWith("AI!") || message.content == ("ai!")) return;
+        if(message.content.toLowerCase() == "aireset!"){
+            lastResponse = "";
+            message.reply("Ai-chan's last respond has been reset.");
+            return;
+        }
+
+        if(message.author.bot || !message.content.toLowerCase().startsWith("ai!") || message.content.toLowerCase() == ("ai!")) return;
         if(!whitelist.list.includes(message.author.id)){
             message.reply(`You're not authorized to use me.`);
             return;
@@ -42,6 +48,7 @@ client.on('messageCreate', async function(message){
             message.reply(`Your input is inappropriate. I will not respond to that.`);
             return;
         }
+
         const gptResponse = await openai.createChatCompletion({
             model: "gpt-3.5-turbo",
             messages: [
