@@ -23,6 +23,7 @@ To "summon" Ai-chan, use `ai!` prefix.
 - Showing how much token is used
 - Showing calculated cost of the API request.
 - Whitelist using user ID, **NOT** Discord tag. (Because you pay for the API, I think this is a good thing to have a little protection preventing random people from using Ai-chan).
+- **NEW!** Use SearXNG to grab results from the web! (~basically a cheap copy of Bing Chat~)
 
 ## Some disclaimers
 - Ai-chan can only follow the context of your last chat, not the chat before that.
