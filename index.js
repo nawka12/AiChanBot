@@ -1,15 +1,18 @@
-require('dotenv').config();
+import dotenv from 'dotenv';
+dotenv.config();
+import { searchQuery } from './searchlogic.js';
+import whitelist from './whitelist.json' assert { type: 'json' };
 
-const whitelist = require('./whitelist.json');
-
-const { Client, GatewayIntentBits } = require('discord.js');
+import { Client } from 'discord.js';
+import Discord from 'discord.js';
+const { GatewayIntentBits } = Discord;
 const client = new Client({ intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent
 ]})
 
-const { Configuration , OpenAIApi } = require('openai');
+import { Configuration , OpenAIApi } from 'openai';
 const configuration = new Configuration({
     organization: process.env.OPENAI_ORG,
     apiKey: process.env.OPENAI_KEY,
@@ -49,23 +52,35 @@ client.on('messageCreate', async function(message){
             return;
         }
 
-        const gptResponse = await openai.createChatCompletion({
-            model: "gpt-3.5-turbo",
-            messages: [
-                {role:"system", content:`You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${currentDate}.`},
-                {role: "assistant", content: `${lastResponse}`},
-                {role:"user", content:`${input}`}
-            ],
-            temperature: 0.4,
-            max_tokens: 256,
-        })
-        
-        lastResponse = gptResponse.data.choices[0].message.content;
-        message.reply(`${lastResponse}\n\n\`\`\`Token Used: ${gptResponse.data.usage.total_tokens}\nCost: $${gptResponse.data.usage.total_tokens * 0.000002}\`\`\``);
-        return;
-    } catch (err) {
-        console.log(err)
-    }
+
+        try {
+            const hasil = await searchQuery(`${input}`);
+            const title = hasil.results[0].title;
+            const url = hasil.results[0].url;
+            const content = hasil.results[0].content;
+
+            console.log(content);
+
+            const gptResponse = await openai.createChatCompletion({
+                model: "gpt-3.5-turbo",
+                messages: [
+                  { role: "system", content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${currentDate}.` },
+                  { role: "system", content: `Here's more data from the web about the user's question. URL: ${url}, Title: ${title}, Content: ${content}` },
+                  { role: "assistant", content: `${lastResponse}` },
+                  { role: "user", content: `${input}` }
+                ],
+                temperature: 0.4,
+                max_tokens: 256,
+              });
+
+            lastResponse = gptResponse.data.choices[0].message.content;
+            message.reply(`${lastResponse}\n\n\`\`\`Token Used: ${gptResponse.data.usage.total_tokens}\nCost: $${gptResponse.data.usage.total_tokens * 0.000002}\`\`\``);
+        } catch (error) {
+            console.error(error);
+        }
+} catch (err) {
+  console.log(err)
+}
 });
 
 client.login(process.env.DISCORD_TOKEN);
