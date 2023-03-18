@@ -9,9 +9,11 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "type": "module",
   "dependencies": {
-    "discord.js": "^14.7.1",
+    "discord.js": "^14.8.0",
     "dotenv": "^16.0.3",
+    "node-fetch": "^3.3.1",
     "openai": "^3.2.1"
   }
 }
