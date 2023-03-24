@@ -4,7 +4,7 @@ const baseUrl = 'https://ametukam.dedyn.io/search?q=';
 const format = '&format=json';
 
 export const searchQuery = (query) => {
-  const url = `${baseUrl}${query.replace(/ /g, '+').replace(/#/g, '%23')}${format}`;
+  const url = `${baseUrl}${encodeURIComponent(query)}${format}`;
   return fetch(url)
     .then(response => response.json())
     .then(searchResult => {
