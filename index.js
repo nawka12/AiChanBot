@@ -37,7 +37,7 @@ client.on('messageCreate', async function(message){
             return;
         }
 
-        if(message.author.bot || !message.content.toLowerCase().startsWith("ai!") || message.content.toLowerCase() == ("ai!")) return;
+        if(message.author.bot || !message.content.toLowerCase().startsWith("ai!") && !message.content.toLowerCase().startsWith("aideep!") || message.content.toLowerCase() == ("ai!") || message.content.toLowerCase() == ("aideep!") ) return;
         if(!whitelist.list.includes(message.author.id)){
             message.reply(`You're not authorized to use me.`);
             return;
@@ -52,32 +52,91 @@ client.on('messageCreate', async function(message){
             return;
         }
 
+        if(message.content.toLowerCase().startsWith("aideep!")){
+            try {
+                const deepInput = input.slice(4);
+                const searchResult = await searchQuery(`${deepInput}`);
+                const messageDeep = [
+                    { role: "system", content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${currentDate}.` },
+                    { role: "system", content: `Here's more data from the web about the user's question:`}
+                ];
+
+                for (let i = 0; i < searchResult.results.length; i++) {
+                    const { url, title, content } = searchResult.results[i];
+                    messageDeep.push({ role: "system", content: `URL: ${url}, Title: ${title}, Content: ${content}` });
+                }
+
+                messageDeep.push(
+                    { role: "assistant", content: `${lastResponse}` },
+                    { role: "user", content: `${deepInput}` }
+                  );
+
+                // console.log(messageDeep);
+
+                const gptResponse = await openai.createChatCompletion({
+                    model: "gpt-3.5-turbo",
+                    messages: messageDeep,
+                    temperature: 0.4,
+                    max_tokens: 256,
+                  });
+    
+                  lastResponse = gptResponse.data.choices[0].message.content;
+                  const totalTokens = gptResponse.data.usage.total_tokens;
+                  const cost = totalTokens * 0.000002;
+                  message.reply(
+                    `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
+                  );
+                return;
+            } catch (error) {
+                console.error(error);
+                message.reply(`There was an error processing your request.`);
+                return;
+            }
+        }
 
         try {
-            const hasil = await searchQuery(`${input}`);
-            const title = hasil.results[0].title;
-            const url = hasil.results[0].url;
-            const content = hasil.results[0].content;
-
-            console.log(content);
-
-            const gptResponse = await openai.createChatCompletion({
-                model: "gpt-3.5-turbo",
-                messages: [
-                  { role: "system", content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${currentDate}.` },
-                  { role: "system", content: `Here's more data from the web about the user's question. URL: ${url}, Title: ${title}, Content: ${content}` },
-                  { role: "assistant", content: `${lastResponse}` },
-                  { role: "user", content: `${input}` }
-                ],
-                temperature: 0.4,
-                max_tokens: 256,
+            const searchResult = await searchQuery(`${input}`);
+            const results = searchResult.results.slice(0, 2);
+            const messages = [
+              {
+                role: "system",
+                content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${currentDate}.`,
+              },
+              {
+                role: "system",
+                content: `Here's more data from the web about the user's question:`,
+              },
+            ];
+            results.forEach((result) => {
+              messages.push({
+                role: "system",
+                content: `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`,
               });
-
+            });
+            messages.push(
+              { role: "assistant", content: `${lastResponse}` },
+              { role: "user", content: `${input}` }
+            );
+            
+            // console.log(messages);
+            const gptResponse = await openai.createChatCompletion({
+              model: "gpt-3.5-turbo",
+              messages,
+              temperature: 0.4,
+              max_tokens: 256,
+            });
+          
             lastResponse = gptResponse.data.choices[0].message.content;
-            message.reply(`${lastResponse}\n\n\`\`\`Token Used: ${gptResponse.data.usage.total_tokens}\nCost: $${gptResponse.data.usage.total_tokens * 0.000002}\`\`\``);
-        } catch (error) {
+            const totalTokens = gptResponse.data.usage.total_tokens;
+            const cost = totalTokens * 0.000002;
+            message.reply(
+              `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
+            );
+          } catch (error) {
             console.error(error);
-        }
+            message.reply(`There was an error processing your request.`);
+            return;
+          }          
 } catch (err) {
   console.log(err)
 }
