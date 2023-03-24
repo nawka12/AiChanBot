@@ -82,7 +82,7 @@ client.on('messageCreate', async function(message){
     
                   lastResponse = gptResponse.data.choices[0].message.content;
                   const totalTokens = gptResponse.data.usage.total_tokens;
-                  const cost = totalTokens * 0.000002;
+                  const cost = (totalTokens * 0.000002).toFixed(6);
                   message.reply(
                     `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
                   );
@@ -128,7 +128,7 @@ client.on('messageCreate', async function(message){
           
             lastResponse = gptResponse.data.choices[0].message.content;
             const totalTokens = gptResponse.data.usage.total_tokens;
-            const cost = totalTokens * 0.000002;
+            const cost = (totalTokens * 0.000002).toFixed(6);
             message.reply(
               `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
             );
