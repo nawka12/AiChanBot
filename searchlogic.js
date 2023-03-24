@@ -4,12 +4,12 @@ const baseUrl = 'https://ametukam.dedyn.io/search?q=';
 const format = '&format=json';
 
 export const searchQuery = (query) => {
-  const url = `${baseUrl}${query.replace(/ /g, '+')}${format}`;
+  const url = `${baseUrl}${query.replace(/ /g, '+').replace(/#/g, '%23')}${format}`;
   return fetch(url)
     .then(response => response.json())
-    .then(hasil => {
+    .then(searchResult => {
       console.log(`Fetched data for query "${query}"`);
-      return hasil;
+      return searchResult;
     })
     .catch(error => {
       console.error(error);
