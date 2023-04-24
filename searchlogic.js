@@ -1,11 +1,10 @@
-import fetch from 'node-fetch';
-
-const baseUrl = 'https://ametukam.dedyn.io/search?q=';
 const format = '&format=json';
+const baseUrl = 'https://ametukam.dedyn.io/search?q=';
 
-export const searchQuery = (query) => {
+module.exports.searchQuery = function(query) {
   const url = `${baseUrl}${encodeURIComponent(query)}${format}`;
-  return fetch(url)
+  return import('node-fetch')
+    .then(fetch => fetch.default(url))
     .then(response => response.json())
     .then(searchResult => {
       console.log(`Fetched data for query "${query}"`);
