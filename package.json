@@ -9,7 +9,6 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "module",
   "dependencies": {
     "discord.js": "^14.8.0",
     "dotenv": "^16.0.3",
