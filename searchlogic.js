@@ -1,5 +1,5 @@
 const format = '&format=json';
-const baseUrl = 'https://ametukam.dedyn.io/search?q=';
+const baseUrl = 'http://127.0.0.1:8080/search?q=';
 
 module.exports.searchQuery = function(query) {
   const url = `${baseUrl}${encodeURIComponent(query)}${format}`;
