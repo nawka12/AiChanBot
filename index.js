@@ -35,10 +35,10 @@ client.on('messageCreate', async function(message){
         }
 
         if(message.author.bot || !message.content.toLowerCase().startsWith("aisearch!") && !message.content.toLowerCase().startsWith("aideep!") && !message.content.toLowerCase().startsWith("ai!") || message.content.toLowerCase() == ("aisearch!") || message.content.toLowerCase() == ("aideep!") || message.content.toLowerCase() == ("ai!") ) return;
-        if(!whitelist.list.includes(message.author.id)){
-            message.reply(`You're not authorized to use me.`);
-            return;
-        }
+        // if(!whitelist.list.includes(message.author.id)){
+        //    message.reply(`You're not authorized to use me.`);
+        //    return;
+        //}
 
         const input = message.content.slice(3);
         const moderation = await openai.createModeration({
