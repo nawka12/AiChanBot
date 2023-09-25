@@ -72,7 +72,7 @@ client.on('messageCreate', async function(message){
                 message.channel.sendTyping();
 
                 const gptResponse = await openai.createChatCompletion({
-                    model: "gpt-3.5-turbo",
+                    model: "gpt-3.5-turbo-16k",
                     messages: messageDeep,
                     temperature: 0.4,
                     max_tokens: 256,
@@ -120,7 +120,7 @@ client.on('messageCreate', async function(message){
             message.channel.sendTyping();
             // console.log(messages);
             const gptResponse = await openai.createChatCompletion({
-              model: "gpt-3.5-turbo",
+              model: "gpt-3.5-turbo-16k",
               messages,
               temperature: 0.4,
               max_tokens: 256,
@@ -149,7 +149,7 @@ client.on('messageCreate', async function(message){
             message.channel.sendTyping();
             // console.log(messages);
             const gptResponse = await openai.createChatCompletion({
-              model: "gpt-3.5-turbo",
+              model: "gpt-3.5-turbo-16k",
               messages,
               temperature: 0.4,
               max_tokens: 256,
