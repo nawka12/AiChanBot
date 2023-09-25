@@ -72,7 +72,7 @@ client.on('messageCreate', async function(message){
                 message.channel.sendTyping();
 
                 const gptResponse = await openai.createChatCompletion({
-                    model: "gpt-3.5-turbo",
+                    model: "gpt-3.5-turbo-16k",
                     messages: messageDeep,
                     temperature: 0.4,
                     max_tokens: 256,
@@ -80,7 +80,7 @@ client.on('messageCreate', async function(message){
     
                   lastResponse = gptResponse.data.choices[0].message.content;
                   const totalTokens = gptResponse.data.usage.total_tokens;
-                  const cost = (totalTokens * 0.000002).toFixed(6);
+                  const cost = (totalTokens * 0.000004).toFixed(6);
                   message.reply(
                     `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
                   );
