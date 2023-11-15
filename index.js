@@ -54,7 +54,7 @@ client.on('messageCreate', async function(message){
                 const deepInput = input.slice(4);
                 const searchResult = await searchQuery(`${deepInput}`);
                 const messageDeep = [
-                    { role: "system", content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}.` },
+                    { role: "system", content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. Keep your answer as short as possible.` },
                     { role: "system", content: `Here's more data from the web about the user's question:`}
                 ];
 
@@ -72,7 +72,7 @@ client.on('messageCreate', async function(message){
                 message.channel.sendTyping();
 
                 const gptResponse = await openai.chat.completions.create({
-                    model: "gpt-3.5-turbo-16k",
+                    model: "gpt-4-1106-preview",
                     messages: messageDeep,
                     temperature: 0.4,
                     max_tokens: 256,
@@ -80,7 +80,7 @@ client.on('messageCreate', async function(message){
     
                   lastResponse = gptResponse.choices[0].message.content;
                   const totalTokens = gptResponse.usage.total_tokens;
-                  const cost = (totalTokens * 0.000004).toFixed(6);
+                  const cost = (totalTokens * 0.00003).toFixed(6);
                   message.reply(
                     `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
                   );
@@ -100,7 +100,7 @@ client.on('messageCreate', async function(message){
             const messages = [
               {
                 role: "system",
-                content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}.`,
+                content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. Keep your answer as short as possible.`,
               },
               {
                 role: "system",
@@ -120,7 +120,7 @@ client.on('messageCreate', async function(message){
             message.channel.sendTyping();
             // console.log(messages);
             const gptResponse = await openai.chat.completions.create({
-              model: "gpt-3.5-turbo",
+              model: "gpt-4-1106-preview",
               messages,
               temperature: 0.4,
               max_tokens: 256,
@@ -128,7 +128,7 @@ client.on('messageCreate', async function(message){
           
             lastResponse = gptResponse.choices[0].message.content;
             const totalTokens = gptResponse.usage.total_tokens;
-            const cost = (totalTokens * 0.000002).toFixed(6);
+            const cost = (totalTokens * 0.00003).toFixed(6);
             message.reply(
               `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
             );
@@ -142,14 +142,14 @@ client.on('messageCreate', async function(message){
         if(message.content.toLowerCase().startsWith("ai!")){
           try {
             const messages = [
-              { role: "system", content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}.` },
+              { role: "system", content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. Keep your answer as short as possible.` },
               { role: "assistant", content: `${lastResponse}` },
               { role: "user", content: `${input}` }
             ];
             message.channel.sendTyping();
             // console.log(messages);
             const gptResponse = await openai.chat.completions.create({
-              model: "gpt-3.5-turbo",
+              model: "gpt-4-1106-preview",
               messages,
               temperature: 0.4,
               max_tokens: 256,
@@ -157,7 +157,7 @@ client.on('messageCreate', async function(message){
           
             lastResponse = gptResponse.choices[0].message.content;
             const totalTokens = gptResponse.usage.total_tokens;
-            const cost = (totalTokens * 0.000002).toFixed(6);
+            const cost = (totalTokens * 0.00003).toFixed(6);
             
             message.reply(
               `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
