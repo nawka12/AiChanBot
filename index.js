@@ -44,7 +44,7 @@ client.on('messageCreate', async function(message){
         const moderation = await openai.moderations.create({
             input: `${input}`
         });
-        if(moderation.data.results[0].flagged == true){
+        if(moderation.results[0].flagged == true){
             message.reply(`Your input is inappropriate. I will not respond to that.`);
             return;
         }
@@ -79,7 +79,7 @@ client.on('messageCreate', async function(message){
                   });
     
                   lastResponse = gptResponse.choices[0].message.content;
-                  const totalTokens = gptResponse.data.usage.total_tokens;
+                  const totalTokens = gptResponse.usage.total_tokens;
                   const cost = (totalTokens * 0.000004).toFixed(6);
                   message.reply(
                     `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
@@ -127,7 +127,7 @@ client.on('messageCreate', async function(message){
             });
           
             lastResponse = gptResponse.choices[0].message.content;
-            const totalTokens = gptResponse.data.usage.total_tokens;
+            const totalTokens = gptResponse.usage.total_tokens;
             const cost = (totalTokens * 0.000002).toFixed(6);
             message.reply(
               `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
@@ -156,7 +156,7 @@ client.on('messageCreate', async function(message){
             });
           
             lastResponse = gptResponse.choices[0].message.content;
-            const totalTokens = gptResponse.data.usage.total_tokens;
+            const totalTokens = gptResponse.usage.total_tokens;
             const cost = (totalTokens * 0.000002).toFixed(6);
             
             message.reply(
