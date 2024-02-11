@@ -72,7 +72,7 @@ client.on('messageCreate', async function(message){
                 message.channel.sendTyping();
 
                 const gptResponse = await openai.chat.completions.create({
-                    model: "gpt-3.5-turbo-1106",
+                    model: "gpt-4-turbo-preview",
                     messages: messageDeep,
                     temperature: 0.4,
                     max_tokens: 256,
@@ -82,7 +82,7 @@ client.on('messageCreate', async function(message){
                   const promptTokens = gptResponse.usage.prompt_tokens;
                   const completionTokens = gptResponse.usage.completion_tokens;
                   const totalTokens = gptResponse.usage.total_tokens;
-                  const cost = ((promptTokens * 0.000001) + (completionTokens * 0.000002)).toFixed(6);
+                  const cost = ((promptTokens * 0.00001) + (completionTokens * 0.00003)).toFixed(6);
                   message.reply(
                     `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
                   );
@@ -122,7 +122,7 @@ client.on('messageCreate', async function(message){
             message.channel.sendTyping();
             // console.log(messages);
             const gptResponse = await openai.chat.completions.create({
-              model: "gpt-3.5-turbo-1106",
+              model: "gpt-4-turbo-preview",
               messages,
               temperature: 0.4,
               max_tokens: 256,
@@ -132,7 +132,7 @@ client.on('messageCreate', async function(message){
             const promptTokens = gptResponse.usage.prompt_tokens;
             const completionTokens = gptResponse.usage.completion_tokens;
             const totalTokens = gptResponse.usage.total_tokens;
-            const cost = ((promptTokens * 0.000001) + (completionTokens * 0.000002)).toFixed(6);
+            const cost = ((promptTokens * 0.00001) + (completionTokens * 0.00003)).toFixed(6);
             message.reply(
               `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
             );
@@ -153,7 +153,7 @@ client.on('messageCreate', async function(message){
             message.channel.sendTyping();
             // console.log(messages);
             const gptResponse = await openai.chat.completions.create({
-              model: "gpt-3.5-turbo-1106",
+              model: "gpt-4-turbo-preview",
               messages,
               temperature: 0.4,
               max_tokens: 256,
@@ -163,7 +163,7 @@ client.on('messageCreate', async function(message){
             const promptTokens = gptResponse.usage.prompt_tokens;
             const completionTokens = gptResponse.usage.completion_tokens;
             const totalTokens = gptResponse.usage.total_tokens;
-            const cost = ((promptTokens * 0.000001) + (completionTokens * 0.000002)).toFixed(6);
+            const cost = ((promptTokens * 0.00001) + (completionTokens * 0.00003)).toFixed(6);
             
             message.reply(
               `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
