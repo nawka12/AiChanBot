@@ -82,7 +82,7 @@ client.on('messageCreate', async function(message){
                   const promptTokens = gptResponse.usage.prompt_tokens;
                   const completionTokens = gptResponse.usage.completion_tokens;
                   const totalTokens = gptResponse.usage.total_tokens;
-                  const cost = ((promptTokens * 0.00001) + (completionTokens * 0.00003)).toFixed(6);
+                  const cost = ((promptTokens * 0.000005) + (completionTokens * 0.000015)).toFixed(6);
                   message.reply(
                     `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
                   );
@@ -132,7 +132,7 @@ client.on('messageCreate', async function(message){
             const promptTokens = gptResponse.usage.prompt_tokens;
             const completionTokens = gptResponse.usage.completion_tokens;
             const totalTokens = gptResponse.usage.total_tokens;
-            const cost = ((promptTokens * 0.00001) + (completionTokens * 0.00003)).toFixed(6);
+            const cost = ((promptTokens * 0.000005) + (completionTokens * 0.000015)).toFixed(6);
             message.reply(
               `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
             );
@@ -163,7 +163,7 @@ client.on('messageCreate', async function(message){
             const promptTokens = gptResponse.usage.prompt_tokens;
             const completionTokens = gptResponse.usage.completion_tokens;
             const totalTokens = gptResponse.usage.total_tokens;
-            const cost = ((promptTokens * 0.00001) + (completionTokens * 0.00003)).toFixed(6);
+            const cost = ((promptTokens * 0.000005) + (completionTokens * 0.000015)).toFixed(6);
             
             message.reply(
               `${lastResponse}\n\n\`\`\`Token Used: ${totalTokens}\nCost: $${cost}\`\`\``
