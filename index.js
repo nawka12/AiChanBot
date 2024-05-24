@@ -54,7 +54,7 @@ client.on('messageCreate', async function(message){
                 const deepInput = input.replace("deepsearch", "").trim();
                 const searchResult = await searchQuery(`${deepInput}`);
                 const messageDeep = [
-                    { role: "system", content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. Keep your answer as short as possible.` },
+                    { role: "system", content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. You're connected to the internet. Keep your answer as short as possible.` },
                     { role: "system", content: `Here's more data from the web about the user's question:`},
                     ...userConversations[message.author.id] || []
                 ];
@@ -104,7 +104,7 @@ client.on('messageCreate', async function(message){
                 const messages = [
                     {
                         role: "system",
-                        content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. Keep your answer as short as possible.`,
+                        content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. You're connected to the internet. Keep your answer as short as possible.`,
                     },
                     {
                         role: "system",
