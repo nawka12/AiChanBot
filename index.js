@@ -28,7 +28,13 @@ client.on('messageCreate', async function(message){
           return;
         }
 
-        // if(message.author.bot || (!message.content.toLowerCase().startsWith("aisearch!") && !message.content.toLowerCase().startsWith("aideep!") && !message.content.toLowerCase().startsWith("ai!")) || message.content.toLowerCase() == ("aisearch!") || message.content.toLowerCase() == ("aideep!") || message.content.toLowerCase() == ("ai!") ) return;
+        if (message.mentions.has(client.user) && 
+          (message.content.trim() === `<@${client.user.id}>` || 
+          message.content.trim().toLowerCase() === `<@${client.user.id}> search` || 
+          message.content.trim().toLowerCase() === `<@${client.user.id}> deepsearch` ||
+          message.content.trim().toLowerCase() === `<@${client.user.id}>search` || 
+          message.content.trim().toLowerCase() === `<@${client.user.id}>deepsearch`)) return;
+
         // if(!whitelist.list.includes(message.author.id)){
         //    message.reply(`You're not authorized to use me.`);
         //    return;
