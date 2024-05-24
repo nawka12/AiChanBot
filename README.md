@@ -12,6 +12,23 @@ Dependencies:
 Don't forget to grab your own OpenAI API key, OpenAI Organization key, and your Discord bot key and put it in `.env` file.
 For easy setup, set the bot permission as `Administrator` in the Discord Developer Portal. (It's safe, supposedly).
 
+## Installation
+
+Assuming you're running this on Ubuntu.
+
+### SearxNG
+
+Refer to [SearxNG docker GitHub page](https://github.com/searxng/searxng-docker) to install SearxNG easily.
+
+### Ai-chan
+
+```sh
+git clone https://github.com/nawka12/AiChanBot
+cd AiChanBot
+npm install
+node index.js # I recommend you to use pm2, npm install -g pm2, then pm2 start index.js
+```
+
 ## How to use
 ~**Don't forget** to add your user ID to `whitelist.json`~ No longer required since the code is commented. You can manually uncomment the whitelist code to enable it.
 
