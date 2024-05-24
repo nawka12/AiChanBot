@@ -21,7 +21,7 @@ const userConversations = {};
 
 client.on('messageCreate', async function(message){
     try {
-        if(message.mentions.has(client.user) && message.content.toLowerCase().includes("reset")){
+        if(message.mentions.has(client.user) && message.content.toLowerCase().startsWith("reset")){
           message.channel.sendTyping();
           userConversations[message.author.id] = [];
           message.reply("Ai-chan's conversations with you have been reset.");
@@ -49,7 +49,7 @@ client.on('messageCreate', async function(message){
             return;
         }
 
-        if(message.mentions.has(client.user) && message.content.toLowerCase().includes("deepsearch")){
+        if(message.mentions.has(client.user) && input.toLowerCase().startsWith("deepsearch")){
             try {
                 const deepInput = input.replace("deepsearch", "").trim();
                 const searchResult = await searchQuery(`${deepInput}`);
@@ -96,7 +96,7 @@ client.on('messageCreate', async function(message){
             }
         }
 
-        if(message.mentions.has(client.user) && message.content.toLowerCase().includes("search")){ 
+        if(message.mentions.has(client.user) && message.content.toLowerCase().startsWith("search")){ 
             try {
                 const searchInput = input.replace("search", "").trim();
                 const searchResult = await searchQuery(`${searchInput}`);
@@ -150,7 +150,7 @@ client.on('messageCreate', async function(message){
             }
         }
 
-        if(message.mentions.has(client.user) && !message.content.toLowerCase().includes("search") && !message.content.toLowerCase().includes("deepsearch")){ 
+        if(message.mentions.has(client.user) && !message.content.toLowerCase().startsWith("search") && !message.content.toLowerCase().startsWith("deepsearch")){ 
             try {
                 const messages = [
                     { role: "system", content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. Keep your answer as short as possible.` },
