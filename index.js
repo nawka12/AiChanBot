@@ -153,7 +153,7 @@ client.on('messageCreate', async function(message){
         if(message.mentions.has(client.user) && !message.content.toLowerCase().startsWith("search") && !message.content.toLowerCase().startsWith("deepsearch")){ 
             try {
                 const messages = [
-                    { role: "system", content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. Keep your answer as short as possible.` },
+                    { role: "system", content: `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. You're not connected to the internet. Keep your answer as short as possible.` },
                     ...userConversations[message.author.id] || [],
                     { role: "user", content: `${input}` }
                 ];
