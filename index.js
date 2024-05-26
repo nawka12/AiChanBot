@@ -24,6 +24,11 @@ const userConversations = {};
 
 client.on('messageCreate', async function(message) {
     try {
+        // Ignore messages from bots
+        if (message.author.bot) {
+            return;
+        }
+
         if (message.mentions.has(client.user)) {
             message.channel.sendTyping();
 
