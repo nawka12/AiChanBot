@@ -41,9 +41,6 @@ client.on('messageCreate', async function(message) {
 
             const systemMessage = `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. You have 3 modes; offline, search (connects you to the internet with up to 3 search results), and deepsearch (connects you to the internet with up to 10 search results). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} command.` : "You're using offline mode."} Keep your answer as short as possible.`;
 
-            // Add system message
-            messages.push({ role: "system", content: systemMessage });
-
             if (command === 'deepsearch' || command === 'search') {
                 try {
                     const searchResult = await searchQuery(commandContent);
@@ -62,12 +59,7 @@ client.on('messageCreate', async function(message) {
 
             // Add conversation history, ensuring alternating roles
             if (userConversations[message.author.id]) {
-                const history = userConversations[message.author.id];
-                for (let i = 0; i < history.length; i += 2) {
-                    if (i + 1 < history.length) {
-                        messages.push(history[i], history[i + 1]);
-                    }
-                }
+                messages = [...userConversations[message.author.id], ...messages];
             }
 
             console.log("Messages to be sent to API:", JSON.stringify(messages, null, 2));
@@ -76,6 +68,7 @@ client.on('messageCreate', async function(message) {
                 const response = await anthropic.messages.create({
                     model: "claude-3-5-sonnet-20240620",
                     max_tokens: 256,
+                    system: systemMessage,
                     messages: messages,
                 });
 
