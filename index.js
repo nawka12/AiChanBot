@@ -67,7 +67,7 @@ client.on('messageCreate', async function(message) {
             try {
                 const response = await anthropic.messages.create({
                     model: "claude-3-5-sonnet-20240620",
-                    max_tokens: 256,
+                    max_tokens: 4096,
                     system: systemMessage,
                     messages: messages,
                 });
