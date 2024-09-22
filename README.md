@@ -1,5 +1,5 @@
 # AiChanBot
-A Discord bot integrated with OpenAI's ChatGPT
+A Discord bot integrated with Anthropic's Claude
 
 ### This bot is still under construction and lacking features.
 
