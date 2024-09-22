@@ -9,7 +9,7 @@ Dependencies:
 - Discord.js
 - dotenv
 
-Don't forget to grab your own Antropic key, and your Discord bot key and put it in `.env` file.
+Don't forget to grab your own Anthropic key, and your Discord bot key and put it in `.env` file.
 For easy setup, set the bot permission as `Administrator` in the Discord Developer Portal. (It's safe, supposedly).
 
 ## Installation
