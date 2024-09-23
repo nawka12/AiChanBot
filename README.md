@@ -2,6 +2,7 @@
 A Discord bot integrated with OpenAI's ChatGPT
 
 ### This bot is still under construction and lacking features.
+### Anthropic Claude version of the bot is also available in `claude` branch
 
 Dependencies:
 - Node.js 20
