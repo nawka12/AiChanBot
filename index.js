@@ -45,7 +45,7 @@ client.on('messageCreate', async function(message) {
                 try {
                     const searchResult = await searchQuery(commandContent);
                     const results = command === 'deepsearch' ? searchResult.results.slice(0, 10) : searchResult.results.slice(0, 3);
-                    
+
                     const searchContent = `Here's more data from the web about my question:\n\n${results.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n')}\n\nMy question is: ${commandContent}`;
                     messages.push({ role: "user", content: searchContent });
                 } catch (error) {
@@ -78,7 +78,36 @@ client.on('messageCreate', async function(message) {
                 userConversations[message.author.id].push({ role: "user", content: input });
                 userConversations[message.author.id].push({ role: "assistant", content: response.content[0].text });
 
-                message.reply(response.content[0].text);
+                // Split and send messages if response exceeds Discord's character limit
+                const maxLength = 2000;
+                const splitMessage = (content) => {
+                    if (content.length <= maxLength) {
+                        return [content];
+                    }
+
+                    const parts = [];
+                    let currentPart = '';
+
+                    content.split('\n').forEach((line) => {
+                        if ((currentPart + line).length > maxLength) {
+                            parts.push(currentPart);
+                            currentPart = '';
+                        }
+                        currentPart += `${line}\n`;
+                    });
+
+                    if (currentPart.length > 0) {
+                        parts.push(currentPart);
+                    }
+
+                    return parts;
+                };
+
+                const messageParts = splitMessage(response.content[0].text);
+
+                for (const part of messageParts) {
+                    await message.reply(part);
+                }
             } catch (error) {
                 console.error("API Error:", error);
                 message.reply(`There was an error processing your request.`);
