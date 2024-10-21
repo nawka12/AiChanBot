@@ -30,7 +30,7 @@ node index.js # I recommend you to use pm2, npm install -g pm2, then pm2 start i
 ```
 
 ## How to use
-~**Don't forget** to add your user ID to `whitelist.json`~ No longer required since the code is commented. You can manually uncomment the whitelist code to enable it.
+~**Don't forget** to add your user ID to `whitelist.json`~ No longer required since the code is ~~commented~~ removed. ~~You can manually uncomment the whitelist code to enable it.~~
 
 To "summon" Ai-chan, mention the bot (eg. @Ai-chan). To use search feature, add `search` or `deepsearch` after mentioning the bot (eg. `@Ai-chan search When is the next hololiveMeet?`) (`search` is using up to 3 search results, `deepsearch` is using multiple queries, with 3 search results per query).
 
