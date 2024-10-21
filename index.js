@@ -27,7 +27,7 @@ client.on('messageCreate', async function(message) {
         if (message.mentions.has(client.user)) {
             message.channel.sendTyping();
 
-            const input = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
+            const input = message.content.replace(`<@${client.user.id}>`, '').trim();
             const command = input.split(' ')[0].toLowerCase();
             const commandContent = input.replace(command, '').trim();
 
@@ -41,8 +41,9 @@ client.on('messageCreate', async function(message) {
 
             const systemMessage = `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. You have 3 modes; offline, search (connects you to the internet with up to 3 search results), and deepsearch (connects you to the internet with up to 10 search results). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} command.` : "You're using offline mode."} Keep your answer as short as possible.`;
             const querySystemMessage = `Your job is to convert questions into a search query. Don't reply with anything other than search query with no quote. Today is ${new Date().toLocaleDateString('en-US', options)}`;
+            const queryDeepSystemMessage = `Your job is to convert questions into search queries. Don't reply with anything other than search queries with no quote, separated by comma. Each search query will be performed separately, so make sure to write the queries straight to the point. Always assume you know nothing about the user's question. Today is ${new Date().toLocaleDateString('en-US', options)}`;
 
-            if (command === 'deepsearch' || command === 'search') {
+            if (command === 'search') {
                 try {
                     const queryAI = await anthropic.messages.create({
                         model: "claude-3-5-sonnet-20240620",
@@ -55,9 +56,38 @@ client.on('messageCreate', async function(message) {
                     const finalQuery = queryAI.content[0].text
                     message.channel.send(`Searching the web for \`${finalQuery}\``);
                     const searchResult = await searchQuery(finalQuery);
-                    const results = command === 'deepsearch' ? searchResult.results.slice(0, 10) : searchResult.results.slice(0, 3);
+                    const results = searchResult.results.slice(0, 3);
 
                     const searchContent = `Here's more data from the web about my question:\n\n${results.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n')}\n\nMy question is: ${commandContent}`;
+                    messages.push({ role: "user", content: searchContent });
+                } catch (error) {
+                    console.error(error);
+                    message.reply(`There was an error processing your search request.`);
+                    return;
+                }
+            } else if(command === 'deepsearch'){
+                try {
+                    const queryAI = await anthropic.messages.create({
+                        model: "claude-3-5-sonnet-20240620",
+                        max_tokens: 4096,
+                        system: queryDeepSystemMessage,
+                        messages: [
+                            {"role": "user", "content": commandContent}
+                        ],
+                    });
+                    const queries = queryAI.content[0].text.split(',').map(q => q.trim());
+
+                    let allResults = [];
+
+                    for(let i = 0; i < queries.length; i++){
+                        const finalQuery = queries[i];
+
+                        message.channel.send(`Searching the web for \`${finalQuery}\``);
+                        const searchResult = await searchQuery(finalQuery);
+                        const results = searchResult.results.slice(0, 3);
+                        allResults = allResults.concat(results);
+                    }
+                    const searchContent = `Here's more data from the web about my question:\n\n${allResults.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n')}\n\nMy question is: ${commandContent}`;
                     messages.push({ role: "user", content: searchContent });
                 } catch (error) {
                     console.error(error);
