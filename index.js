@@ -40,10 +40,21 @@ client.on('messageCreate', async function(message) {
             let messages = [];
 
             const systemMessage = `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', options)}. You have 3 modes; offline, search (connects you to the internet with up to 3 search results), and deepsearch (connects you to the internet with up to 10 search results). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} command.` : "You're using offline mode."} Keep your answer as short as possible.`;
+            const querySystemMessage = `Your job is to convert questions into a search query. Don't reply with anything other than search query with no quote.`;
 
             if (command === 'deepsearch' || command === 'search') {
                 try {
-                    const searchResult = await searchQuery(commandContent);
+                    const queryAI = await anthropic.messages.create({
+                        model: "claude-3-5-sonnet-20240620",
+                        max_tokens: 4096,
+                        system: querySystemMessage,
+                        messages: [
+                            {"role": "user", "content": commandContent}
+                        ],
+                    });
+                    const finalQuery = queryAI.content[0].text
+                    message.channel.send(`Searching the web for \`${finalQuery}\``);
+                    const searchResult = await searchQuery(finalQuery);
                     const results = command === 'deepsearch' ? searchResult.results.slice(0, 10) : searchResult.results.slice(0, 3);
 
                     const searchContent = `Here's more data from the web about my question:\n\n${results.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n')}\n\nMy question is: ${commandContent}`;
@@ -105,8 +116,15 @@ client.on('messageCreate', async function(message) {
 
                 const messageParts = splitMessage(response.content[0].text);
 
-                for (const part of messageParts) {
-                    await message.reply(part);
+                for (let i = 0; i < messageParts.length; i++) {
+                    if (i === 0) {
+                        await message.reply({
+                            content: messageParts[i],
+                            allowedMentions: { repliedUser: true }, // Ping the user in the first reply
+                        });
+                    } else {
+                        await message.channel.send(messageParts[i]); // No ping for subsequent messages
+                    }
                 }
             } catch (error) {
                 console.error("API Error:", error);
