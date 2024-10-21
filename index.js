@@ -27,7 +27,7 @@ client.on('messageCreate', async function(message) {
         if (message.mentions.has(client.user)) {
             message.channel.sendTyping();
 
-            const input = message.content.replace(`<@${client.user.id}>`, '').trim();
+            const input = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
             const command = input.split(' ')[0].toLowerCase();
             const commandContent = input.replace(command, '').trim();
 
