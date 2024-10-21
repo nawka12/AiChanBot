@@ -54,7 +54,6 @@ client.on('messageCreate', async function(message) {
                     });
                     const finalQuery = queryAI.content[0].text
                     message.channel.send(`Searching the web for \`${finalQuery}\``);
-                    message.channel.sendTyping();
                     const searchResult = await searchQuery(finalQuery);
                     const results = command === 'deepsearch' ? searchResult.results.slice(0, 10) : searchResult.results.slice(0, 3);
 
