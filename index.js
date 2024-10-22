@@ -16,6 +16,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
 });
+const aiModel = `claude-3-5-sonnet-latest`
 
 const options = { day: 'numeric', month: 'long', year: 'numeric' };
 const userConversations = {};
@@ -46,7 +47,7 @@ client.on('messageCreate', async function(message) {
             if (command === 'search') {
                 try {
                     const queryAI = await anthropic.messages.create({
-                        model: "claude-3-5-sonnet-20240620",
+                        model: aiModel,
                         max_tokens: 4096,
                         system: querySystemMessage,
                         messages: [
@@ -68,7 +69,7 @@ client.on('messageCreate', async function(message) {
             } else if(command === 'deepsearch'){
                 try {
                     const queryAI = await anthropic.messages.create({
-                        model: "claude-3-5-sonnet-20240620",
+                        model: aiModel,
                         max_tokens: 4096,
                         system: queryDeepSystemMessage,
                         messages: [
@@ -107,7 +108,7 @@ client.on('messageCreate', async function(message) {
 
             try {
                 const response = await anthropic.messages.create({
-                    model: "claude-3-5-sonnet-20240620",
+                    model: aiModel,
                     max_tokens: 4096,
                     system: systemMessage,
                     messages: messages,
