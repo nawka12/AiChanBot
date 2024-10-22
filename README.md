@@ -30,8 +30,6 @@ node index.js # I recommend you to use pm2, npm install -g pm2, then pm2 start i
 ```
 
 ## How to use
-~**Don't forget** to add your user ID to `whitelist.json`~ No longer required since the code is ~~commented~~ removed. ~~You can manually uncomment the whitelist code to enable it.~~
-
 To "summon" Ai-chan, mention the bot (eg. @Ai-chan). To use search feature, add `search` or `deepsearch` after mentioning the bot (eg. `@Ai-chan search When is the next hololiveMeet?`) (`search` is using up to 3 search results, `deepsearch` is using multiple queries, with 3 search results per query).
 
 Mention the bot `reset` (eg. `@Ai-chan reset`) to reset your conversation and save token!
@@ -40,7 +38,6 @@ Mention the bot `reset` (eg. `@Ai-chan reset`) to reset your conversation and sa
 - Saving user's conversation separately so you can chat about something while your friend chat about something else without confusing the bot.
 - Showing how much token is used
 - Showing calculated cost of the API request.
-- ~~Whitelist using user ID, **NOT** Discord tag. (Because you pay for the API, I think this is a good thing to have a little protection preventing random people from using the bot)~~. Whitelist is deprecated and removed from the main code, despite still imported to the main code.
 - Using SearXNG to grab results from the web!
 
 ## Some disclaimers
