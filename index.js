@@ -48,7 +48,8 @@ client.on('messageCreate', async function(message) {
                 try {
                     const queryAI = await anthropic.messages.create({
                         model: aiModel,
-                        max_tokens: 4096,
+                        max_tokens: 100,
+                        temperature: 0.7,
                         system: querySystemMessage,
                         messages: [
                             {"role": "user", "content": commandContent}
@@ -70,7 +71,8 @@ client.on('messageCreate', async function(message) {
                 try {
                     const queryAI = await anthropic.messages.create({
                         model: aiModel,
-                        max_tokens: 4096,
+                        max_tokens: 100,
+                        temperature: 0.7,
                         system: queryDeepSystemMessage,
                         messages: [
                             {"role": "user", "content": commandContent}
