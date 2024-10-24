@@ -115,6 +115,9 @@ const performSearch = async (command, queryResponse, commandContent, message) =>
     let allResults = [];
     
     for (let query of queries) {
+        // Send a message indicating the search query
+        await message.channel.send(`Searching the web for \`${query}\``);
+        
         const searchResult = await searchQuery(query);
         allResults = allResults.concat(searchResult.results.slice(0, MAX_SEARCH_RESULTS));
     }
