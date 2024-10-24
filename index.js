@@ -38,54 +38,61 @@ const userConversations = {};
 const userContexts = {};
 
 // Helper functions
-const processImage = async (attachment, userId, input) => {
-    const imageResponse = await fetch(attachment.url);
-    const imageBuffer = await imageResponse.buffer();
-    const base64Image = imageBuffer.toString('base64');
+const processImages = async (attachments, userId, input) => {
+    let imageDescriptions = [];
 
-    const imageContent = {
-        type: "image",
-        source: {
-            type: "base64",
-            media_type: attachment.contentType,
-            data: base64Image
-        }
-    };
+    for (const [, attachment] of attachments) {
+        if (attachment.contentType.startsWith('image/')) {
+            const imageResponse = await fetch(attachment.url);
+            const imageBuffer = await imageResponse.buffer();
+            const base64Image = imageBuffer.toString('base64');
 
-    const imageAI = await anthropic.messages.create({
-        model: AI_MODEL,
-        max_tokens: MAX_TOKENS,
-        system: "Describe the image concisely and answer the user's question if provided.",
-        messages: [
-            {
-                role: "user",
-                content: [
-                    imageContent,
+            const imageContent = {
+                type: "image",
+                source: {
+                    type: "base64",
+                    media_type: attachment.contentType,
+                    data: base64Image
+                }
+            };
+
+            const imageAI = await anthropic.messages.create({
+                model: AI_MODEL,
+                max_tokens: MAX_TOKENS,
+                system: "Describe the image concisely and answer the user's question if provided.",
+                messages: [
                     {
-                        type: "text",
-                        text: input || "What's in this image?"
+                        role: "user",
+                        content: [
+                            imageContent,
+                            {
+                                type: "text",
+                                text: input || "What's in this image?"
+                            }
+                        ]
                     }
                 ]
+            });
+
+            const imageDescription = imageAI.content[0].text;
+            imageDescriptions.push(imageDescription);
+
+            // Add image description to the conversation history
+            if (!userConversations[userId]) {
+                userConversations[userId] = [];
             }
-        ]
-    });
-
-    const imageDescription = imageAI.content[0].text;
-
-    // Add image description to the conversation history
-    if (!userConversations[userId]) {
-        userConversations[userId] = [];
+            userConversations[userId].push({
+                role: "user",
+                content: [{ type: "text", text: `[Image] ${input}` }]
+            });
+            userConversations[userId].push({
+                role: "assistant",
+                content: imageDescription
+            });
+        }
     }
-    userConversations[userId].push({
-        role: "user",
-        content: [{ type: "text", text: `[Image] ${input}` }]
-    });
-    userConversations[userId].push({
-        role: "assistant",
-        content: imageDescription
-    });
 
-    return imageDescription;
+    return imageDescriptions.join('\n\n');
 };
 
 const processContext = async (userId) => {
@@ -187,36 +194,30 @@ client.on('messageCreate', async function(message) {
             return;
         }
 
-        let imageDescription = '';
+        let imageDescriptions = '';
         if (message.attachments.size > 0) {
-            const attachment = message.attachments.first();
-            if (attachment.contentType.startsWith('image/')) {
-                try {
-                    imageDescription = await processImage(attachment, message.author.id, input);
-                    console.log(`Image processed. Description: ${imageDescription}`);
-                    
-                    // If it's offline mode, send the image description as the response
-                    if (command !== 'search' && command !== 'deepsearch') {
-                        const messageParts = splitMessage(imageDescription);
-                        for (let i = 0; i < messageParts.length; i++) {
-                            if (i === 0) {
-                                await message.reply({
-                                    content: messageParts[i],
-                                    allowedMentions: { repliedUser: true },
-                                });
-                            } else {
-                                await message.channel.send(messageParts[i]);
-                            }
+            try {
+                imageDescriptions = await processImages(message.attachments, message.author.id, input);
+                console.log(`Images processed. Descriptions: ${imageDescriptions}`);
+                
+                // If it's offline mode, send the image descriptions as the response
+                if (command !== 'search' && command !== 'deepsearch') {
+                    const messageParts = splitMessage(imageDescriptions);
+                    for (let i = 0; i < messageParts.length; i++) {
+                        if (i === 0) {
+                            await message.reply({
+                                content: messageParts[i],
+                                allowedMentions: { repliedUser: true },
+                            });
+                        } else {
+                            await message.channel.send(messageParts[i]);
                         }
-                        return; // Exit the function here for offline mode with image
                     }
-                } catch (error) {
-                    console.error("Error processing image:", error);
-                    await message.reply("Sorry, there was an error processing the image.");
-                    return;
+                    return; // Exit the function here for offline mode with images
                 }
-            } else {
-                await message.reply("Sorry, I can only process image attachments.");
+            } catch (error) {
+                console.error("Error processing images:", error);
+                await message.reply("Sorry, there was an error processing the images.");
                 return;
             }
         }
@@ -234,7 +235,7 @@ client.on('messageCreate', async function(message) {
                     userContexts[message.author.id] = await processContext(message.author.id);
                 }
 
-                const queryContext = `${userContexts[message.author.id] ? `Context: ${userContexts[message.author.id]}\n` : ''}${imageDescription ? `Image description: ${imageDescription}\n` : ''}Question: ${commandContent}`;
+                const queryContext = `${userContexts[message.author.id] ? `Context: ${userContexts[message.author.id]}\n` : ''}${imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''}Question: ${commandContent}`;
 
                 const queryAI = await anthropic.messages.create({
                     model: AI_MODEL,
@@ -255,6 +256,9 @@ client.on('messageCreate', async function(message) {
             }
         } else {
             messages.push({ role: "user", content: input });
+            if (imageDescriptions) {
+                messages.push({ role: "assistant", content: imageDescriptions });
+            }
             if (userConversations[message.author.id].length >= 2) {
                 userContexts[message.author.id] = await processContext(message.author.id);
             }
