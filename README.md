@@ -25,6 +25,7 @@ Refer to [SearxNG docker GitHub page](https://github.com/searxng/searxng-docker)
 ```sh
 git clone https://github.com/nawka12/AiChanBot
 cd AiChanBot
+git checkout claude
 npm install
 node index.js # I recommend you to use pm2, npm install -g pm2, then pm2 start index.js
 ```
