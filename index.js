@@ -182,9 +182,10 @@ client.on('messageCreate', async function(message) {
         const input = message.content
             .replace(`<@${client.user.id}>`, '')
             .replace(/<@&\d+>/g, '')
-            .trim();
+            .trim()
+            .replace(/\n+/g, ' ');
         const [rawCommand, ...contentParts] = input.split(' ');
-        const command = rawCommand.toLowerCase(); // Convert command to lowercase
+        const command = rawCommand.toLowerCase();
         const commandContent = contentParts.join(' ');
 
         if (command === 'reset') {
