@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const { searchQuery } = require('./searchlogic.js');
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const Anthropic = require('@anthropic-ai/sdk');
 const fetch = require('node-fetch');
 
@@ -25,7 +25,15 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.DirectMessageTyping,
+        GatewayIntentBits.DirectMessageReactions
+    ],
+    partials: [
+        Partials.Channel,
+        Partials.Message,
+        Partials.User
     ]
 });
 
@@ -175,7 +183,11 @@ const splitMessage = (content) => {
 // Main message handler
 client.on('messageCreate', async function(message) {
     try {
-        if (message.author.bot || !message.mentions.has(client.user)) return;
+        // If it's a bot message, ignore it
+        if (message.author.bot) return;
+
+        // Allow both DMs and mentions in servers
+        if (message.channel.type !== 1 && !message.mentions.has(client.user)) return;
 
         message.channel.sendTyping();
 
@@ -289,13 +301,19 @@ client.on('messageCreate', async function(message) {
             const messageParts = splitMessage(response.content[0].text);
 
             for (let i = 0; i < messageParts.length; i++) {
-                if (i === 0) {
-                    await message.reply({
-                        content: messageParts[i],
-                        allowedMentions: { repliedUser: true },
-                    });
-                } else {
+                if (message.channel.type === 1) {
+                    // For DMs
                     await message.channel.send(messageParts[i]);
+                } else {
+                    // For guild messages
+                    if (i === 0) {
+                        await message.reply({
+                            content: messageParts[i],
+                            allowedMentions: { repliedUser: true },
+                        });
+                    } else {
+                        await message.channel.send(messageParts[i]);
+                    }
                 }
             }
         } catch (error) {
@@ -309,3 +327,8 @@ client.on('messageCreate', async function(message) {
 
 client.login(process.env.DISCORD_TOKEN);
 console.log("Ai-chan is Online");
+
+// Add a ready event handler to verify intents
+client.once('ready', () => {
+    console.log(`Logged in as ${client.user.tag}`);
+});
