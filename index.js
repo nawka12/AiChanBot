@@ -10,7 +10,7 @@ const AI_MODEL = 'claude-3-5-sonnet-latest';
 const MAX_TOKENS = 8192;
 const MAX_SEARCH_RESULTS = 3;
 const MAX_MESSAGE_LENGTH = 2000;
-const DATE_OPTIONS = { day: 'numeric', month: 'long', year: 'numeric' };
+const DATE_OPTIONS = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
 const TIME_OPTIONS = { 
     hour: '2-digit', 
     minute: '2-digit',
