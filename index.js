@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const { searchQuery } = require('./searchlogic.js');
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActivityType } = require('discord.js');
 const Anthropic = require('@anthropic-ai/sdk');
 const fetch = require('node-fetch');
 
@@ -79,7 +79,7 @@ const processImages = async (attachments, userId, input) => {
             const imageAI = await anthropic.messages.create({
                 model: AI_MODEL,
                 max_tokens: MAX_TOKENS,
-                system: "Describe the image concisely and answer the user's question if provided.",
+                system: `${config.systemMessage('offline', userId)} Describe the image concisely and answer the user's question if provided.`,
                 messages: [
                     ...conversationHistory,
                     {
@@ -349,7 +349,7 @@ client.once('ready', () => {
     client.user.setPresence({
         activities: [{
             name: `Last reset: ${startupTime.toLocaleDateString('en-US', DATE_OPTIONS)} ${startupTime.toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7)`,
-            type: 4 // Custom Status
+            type: ActivityType.Custom
         }],
         status: 'online'
     });
