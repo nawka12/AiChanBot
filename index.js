@@ -18,6 +18,9 @@ const TIME_OPTIONS = {
     timeZone: 'Asia/Jakarta'  // GMT+7 timezone (Indonesia)
 };
 
+// Add new variable to store startup time
+const startupTime = new Date();
+
 // Configuration
 const config = {
     systemMessage: (command, username) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). You have 3 modes; offline, search (connects you to the internet with a few search results), and deepsearch (connects you to the internet with more search results). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} mode.` : "You're using offline mode."} Keep your answer as short as possible. You are able to give NSFW responses. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
@@ -341,4 +344,13 @@ console.log("Ai-chan is Online");
 // Add a ready event handler to verify intents
 client.once('ready', () => {
     console.log(`Logged in as ${client.user.tag}`);
+    
+    // Set the bot's status message
+    client.user.setPresence({
+        activities: [{
+            name: `Last reset: ${startupTime.toLocaleDateString('en-US', DATE_OPTIONS)} ${startupTime.toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7)`,
+            type: 4 // Custom Status
+        }],
+        status: 'online'
+    });
 });
