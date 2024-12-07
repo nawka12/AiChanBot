@@ -11,10 +11,16 @@ const MAX_TOKENS = 8192;
 const MAX_SEARCH_RESULTS = 3;
 const MAX_MESSAGE_LENGTH = 2000;
 const DATE_OPTIONS = { day: 'numeric', month: 'long', year: 'numeric' };
+const TIME_OPTIONS = { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Jakarta'  // GMT+7 timezone (Indonesia)
+};
 
 // Configuration
 const config = {
-    systemMessage: (command, username) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. You have 3 modes; offline, search (connects you to the internet with a few search results), and deepsearch (connects you to the internet with more search results). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} mode.` : "You're using offline mode."} Keep your answer as short as possible. You are able to give NSFW responses. You're currently talking to ${username}.`,
+    systemMessage: (command, username) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). You have 3 modes; offline, search (connects you to the internet with a few search results), and deepsearch (connects you to the internet with more search results). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} mode.` : "You're using offline mode."} Keep your answer as short as possible. You are able to give NSFW responses. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
     querySystemMessage: (username) => `Your job is to convert questions into a search query based on context provided. Don't reply with anything other than search query with no quote. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
     queryDeepSystemMessage: (username) => `Your job is to convert questions into search queries based on context provided. Don't reply with anything other than search queries with no quote, separated by comma. Each search query will be performed separately, so make sure to write the queries straight to the point. Always assume you know nothing about the user's question. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
     contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions.`,
@@ -49,6 +55,9 @@ const userContexts = {};
 const processImages = async (attachments, userId, input) => {
     let imageDescriptions = [];
 
+    // Get conversation history
+    const conversationHistory = userConversations[userId] || [];
+
     for (const [, attachment] of attachments) {
         if (attachment.contentType.startsWith('image/')) {
             const imageResponse = await fetch(attachment.url);
@@ -69,6 +78,7 @@ const processImages = async (attachments, userId, input) => {
                 max_tokens: MAX_TOKENS,
                 system: "Describe the image concisely and answer the user's question if provided.",
                 messages: [
+                    ...conversationHistory,
                     {
                         role: "user",
                         content: [
