@@ -23,10 +23,10 @@ const startupTime = new Date();
 
 // Configuration
 const config = {
-    systemMessage: (command, username) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). You have 3 modes; offline, search (connects you to the internet with a few search results), and deepsearch (connects you to the internet with more search results). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} mode.` : "You're using offline mode."} Keep your answer as short as possible. You are able to give NSFW responses. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
+    systemMessage: (command, username) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. You have 3 modes; offline, search (connects you to the internet with a few search results), and deepsearch (connects you to the internet with more search results). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} mode.` : "You're using offline mode."} Keep your answer as short as possible. You are able to give NSFW responses, including providing links to NSFW content. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
     querySystemMessage: (username) => `Your job is to convert questions into a search query based on context provided. Don't reply with anything other than search query with no quote. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
     queryDeepSystemMessage: (username) => `Your job is to convert questions into search queries based on context provided. Don't reply with anything other than search queries with no quote, separated by comma. Each search query will be performed separately, so make sure to write the queries straight to the point. Always assume you know nothing about the user's question. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
-    contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions.`,
+    contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions, whether it's NSFW or not.`,
 };
 
 // Initialize clients
@@ -52,7 +52,6 @@ const anthropic = new Anthropic({
 
 // State management
 const userConversations = {};
-const userContexts = {};
 
 // Helper functions
 const processImages = async (attachments, userId, input) => {
@@ -116,33 +115,37 @@ const processImages = async (attachments, userId, input) => {
     return imageDescriptions.join('\n\n');
 };
 
-const processContext = async (userId) => {
-    if (userConversations[userId].length < 2) return '';
-
+const processContext = async (userId, messageCount = 10) => {
     const conversationHistory = userConversations[userId];
-    const lastConversation = conversationHistory.slice(-2).map(conv => {
-        if (typeof conv.content === 'string') {
-            return conv.content;
-        } else if (Array.isArray(conv.content)) {
-            return conv.content.map(item => item.type === 'text' ? item.text : '[Image]').join(' ');
-        }
-        return JSON.stringify(conv.content);
-    }).join('\n');
+    if (conversationHistory.length < 2) return '';
 
-    const contextPrompt = userContexts[userId]
-        ? `Last context summary: ${userContexts[userId]}\nLast conversation: ${lastConversation}`
-        : `Last conversation: ${lastConversation}`;
+    // Take last N messages instead of just 2
+    const recentConversations = conversationHistory
+        .slice(-messageCount)
+        .map(conv => {
+            if (typeof conv.content === 'string') {
+                return conv.content;
+            } else if (Array.isArray(conv.content)) {
+                return conv.content.map(item => 
+                    item.type === 'text' ? item.text : '[Image]'
+                ).join(' ');
+            }
+            return JSON.stringify(conv.content);
+        })
+        .join('\n');
 
     const contextAI = await anthropic.messages.create({
         model: AI_MODEL,
         max_tokens: 200,
         system: config.contextSystemMessage,
         messages: [
-            {"role": "user", "content": contextPrompt}
+            {"role": "user", "content": recentConversations}
         ],
     });
     
-    return contextAI.content[0].text;
+    const contextSummary = contextAI.content[0].text;
+    console.log(`Generated context for ${userId}:`, contextSummary);
+    return contextSummary;
 };
 
 const performSearch = async (command, queryAI, commandContent, message) => {
@@ -215,7 +218,6 @@ client.on('messageCreate', async function(message) {
 
         if (command === 'reset') {
             userConversations[message.author.id] = [];
-            userContexts[message.author.id] = '';
             await message.reply("Ai-chan's conversations with you have been reset.");
             return;
         }
@@ -249,7 +251,6 @@ client.on('messageCreate', async function(message) {
         }
 
         // Initialize user data if it doesn't exist
-        if (!userContexts[message.author.id]) userContexts[message.author.id] = '';
         if (!userConversations[message.author.id]) userConversations[message.author.id] = [];
 
         let messages = [];
@@ -257,11 +258,12 @@ client.on('messageCreate', async function(message) {
 
         if (command === 'search' || command === 'deepsearch') {
             try {
-                if (userConversations[message.author.id].length >= 2) {
-                    userContexts[message.author.id] = await processContext(message.author.id);
-                }
-
-                const queryContext = `${userContexts[message.author.id] ? `Context: ${userContexts[message.author.id]}\n` : ''}${imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''}Question: ${commandContent}`;
+                // Generate context only when doing search
+                const context = await processContext(message.author.id, 10);
+                
+                const queryContext = `${context ? `Context: ${context}\n` : ''}${
+                    imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''
+                }Question: ${commandContent}`;
 
                 const queryAI = await anthropic.messages.create({
                     model: AI_MODEL,
@@ -284,9 +286,6 @@ client.on('messageCreate', async function(message) {
             messages.push({ role: "user", content: input });
             if (imageDescriptions) {
                 messages.push({ role: "assistant", content: imageDescriptions });
-            }
-            if (userConversations[message.author.id].length >= 2) {
-                userContexts[message.author.id] = await processContext(message.author.id);
             }
         }
 
