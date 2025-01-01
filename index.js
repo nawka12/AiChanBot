@@ -290,9 +290,6 @@ client.on('messageCreate', async function(message) {
         }
 
         messages = [...userConversations[message.author.id], ...messages];
-        messages = messages.filter((message, index, self) =>
-            index === self.findIndex((t) => t.role === message.role && JSON.stringify(t.content) === JSON.stringify(message.content))
-        );
 
         console.log("Messages to be sent to API:", JSON.stringify(messages, null, 2));
 
