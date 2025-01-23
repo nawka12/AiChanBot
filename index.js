@@ -51,14 +51,17 @@ const anthropic = new Anthropic({
 });
 
 // State management
-const userConversations = {};
+const userConversations = {}; // For DM conversations
+const guildConversations = {}; // For guild/server conversations
 
 // Helper functions
-const processImages = async (attachments, userId, input) => {
+const processImages = async (attachments, userId, guildId, input) => {
     let imageDescriptions = [];
 
-    // Get conversation history
-    const conversationHistory = userConversations[userId] || [];
+    // Get appropriate conversation history
+    const conversationHistory = guildId ? 
+        (guildConversations[guildId] || []) : 
+        (userConversations[userId] || []);
 
     for (const [, attachment] of attachments) {
         if (attachment.contentType.startsWith('image/')) {
@@ -97,27 +100,44 @@ const processImages = async (attachments, userId, input) => {
             const imageDescription = imageAI.content[0].text;
             imageDescriptions.push(imageDescription);
 
-            // Add image description to the conversation history
-            if (!userConversations[userId]) {
-                userConversations[userId] = [];
+            // Add image description to the appropriate conversation history
+            if (guildId) {
+                if (!guildConversations[guildId]) {
+                    guildConversations[guildId] = [];
+                }
+                guildConversations[guildId].push({
+                    role: "user",
+                    content: [{ type: "text", text: `[Image] ${input}` }]
+                });
+                guildConversations[guildId].push({
+                    role: "assistant",
+                    content: imageDescription
+                });
+            } else {
+                if (!userConversations[userId]) {
+                    userConversations[userId] = [];
+                }
+                userConversations[userId].push({
+                    role: "user",
+                    content: [{ type: "text", text: `[Image] ${input}` }]
+                });
+                userConversations[userId].push({
+                    role: "assistant",
+                    content: imageDescription
+                });
             }
-            userConversations[userId].push({
-                role: "user",
-                content: [{ type: "text", text: `[Image] ${input}` }]
-            });
-            userConversations[userId].push({
-                role: "assistant",
-                content: imageDescription
-            });
         }
     }
 
     return imageDescriptions.join('\n\n');
 };
 
-const processContext = async (userId, messageCount = 10) => {
-    const conversationHistory = userConversations[userId];
-    if (conversationHistory.length < 2) return '';
+const processContext = async (userId, guildId, messageCount = 10) => {
+    const conversationHistory = guildId ? 
+        guildConversations[guildId] : 
+        userConversations[userId];
+    
+    if (!conversationHistory || conversationHistory.length < 2) return '';
 
     // Take last N messages instead of just 2
     const recentConversations = conversationHistory
@@ -216,16 +236,40 @@ client.on('messageCreate', async function(message) {
         const command = rawCommand.toLowerCase();
         const commandContent = contentParts.join(' ');
 
+        const isDM = message.channel.type === 1;
+        const guildId = isDM ? null : message.guild.id;
+
+        // Modify the input to include username for guild messages
+        const processedInput = isDM ? 
+            input : 
+            `[${message.author.username}]: ${input}`;
+
+        // Initialize conversations if they don't exist
+        if (isDM) {
+            if (!userConversations[message.author.id]) {
+                userConversations[message.author.id] = [];
+            }
+        } else {
+            if (!guildConversations[guildId]) {
+                guildConversations[guildId] = [];
+            }
+        }
+
         if (command === 'reset') {
-            userConversations[message.author.id] = [];
-            await message.reply("Ai-chan's conversations with you have been reset.");
+            if (isDM) {
+                userConversations[message.author.id] = [];
+                await message.reply("Ai-chan's personal conversations with you have been reset.");
+            } else {
+                guildConversations[guildId] = [];
+                await message.reply("Ai-chan's server conversations have been reset.");
+            }
             return;
         }
 
         let imageDescriptions = '';
         if (message.attachments.size > 0) {
             try {
-                imageDescriptions = await processImages(message.attachments, message.author.id, input);
+                imageDescriptions = await processImages(message.attachments, message.author.id, guildId, input);
                 console.log(`Images processed. Descriptions: ${imageDescriptions}`);
                 
                 // If it's offline mode, send the image descriptions as the response
@@ -250,16 +294,12 @@ client.on('messageCreate', async function(message) {
             }
         }
 
-        // Initialize user data if it doesn't exist
-        if (!userConversations[message.author.id]) userConversations[message.author.id] = [];
-
         let messages = [];
         let searchContent = '';
 
         if (command === 'search' || command === 'deepsearch') {
             try {
-                // Generate context only when doing search
-                const context = await processContext(message.author.id, 10);
+                const context = await processContext(message.author.id, guildId, 10);
                 
                 const queryContext = `${context ? `Context: ${context}\n` : ''}${
                     imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''
@@ -283,13 +323,18 @@ client.on('messageCreate', async function(message) {
                 return;
             }
         } else {
-            messages.push({ role: "user", content: input });
+            messages.push({ role: "user", content: processedInput });
             if (imageDescriptions) {
                 messages.push({ role: "assistant", content: imageDescriptions });
             }
         }
 
-        messages = [...userConversations[message.author.id], ...messages];
+        // Get the appropriate conversation history
+        const conversationHistory = isDM ? 
+            userConversations[message.author.id] : 
+            guildConversations[guildId];
+        
+        messages = [...conversationHistory, ...messages];
 
         console.log("Messages to be sent to API:", JSON.stringify(messages, null, 2));
 
@@ -301,11 +346,20 @@ client.on('messageCreate', async function(message) {
                 messages: messages,
             });
 
-            userConversations[message.author.id].push({ role: "user", content: input });
-            userConversations[message.author.id].push({ 
-                role: "assistant", 
-                content: response.content[0].text 
-            });
+            // Update the appropriate conversation history
+            if (isDM) {
+                userConversations[message.author.id].push({ role: "user", content: input });
+                userConversations[message.author.id].push({ 
+                    role: "assistant", 
+                    content: response.content[0].text 
+                });
+            } else {
+                guildConversations[guildId].push({ role: "user", content: processedInput });
+                guildConversations[guildId].push({ 
+                    role: "assistant", 
+                    content: response.content[0].text 
+                });
+            }
 
             const messageParts = splitMessage(response.content[0].text);
 
