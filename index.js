@@ -254,9 +254,9 @@ client.on('messageCreate', async function(message) {
                 const queryContext = `${context ? `Context: ${context}\n` : ''}Question: ${commandContent}`;
 
                 const queryAI = await openai.chat.completions.create({
-                    model: AI_QUERY_MODEL,  // Using deepseek-chat
+                    model: AI_QUERY_MODEL,
                     max_tokens: 100,
-                    temperature: 0.7,
+                    temperature: 0.3,
                     messages: [
                         { role: "system", content: command === 'search' ? config.querySystemMessage(message.author.username) : config.queryDeepSystemMessage(message.author.username) },
                         { role: "user", content: queryContext }
@@ -300,6 +300,7 @@ client.on('messageCreate', async function(message) {
             const response = await openai.chat.completions.create({
                 model: AI_MODEL,
                 max_tokens: MAX_TOKENS,
+                temperature: 0.3,
                 messages: [
                     { role: "system", content: config.systemMessage(command, message.author.username) },
                     ...messages
