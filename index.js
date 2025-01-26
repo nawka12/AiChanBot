@@ -306,11 +306,11 @@ client.on('messageCreate', async function(message) {
                 ],
             });
 
-            // Calculate processing time
-            const processingTime = Date.now() - startTime;
+            // Calculate processing time in seconds
+            const processingTime = ((Date.now() - startTime) / 1000).toFixed(2);
             
-            // Update the thinking message
-            await thinkingMsg.edit(`Done! Thinked for ${processingTime}ms.`);
+            // Update the thinking message with seconds
+            await thinkingMsg.edit(`Done! Thinked for ${processingTime}s.`);
 
             const responseContent = formatAIResponse(response);
 
