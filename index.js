@@ -127,7 +127,7 @@ const formatSearchResults = (results, commandContent) => {
 
 // Update splitMessage to handle spoiler tags
 const splitMessage = (content, isReasoning = false) => {
-    const MAX_LENGTH = isReasoning ? MAX_MESSAGE_LENGTH - 4 : MAX_MESSAGE_LENGTH; // Account for spoiler tags
+    const MAX_LENGTH = MAX_MESSAGE_LENGTH - 4; // Account for spoiler tags
     
     if (content.length <= MAX_LENGTH) {
         return [content];
@@ -189,7 +189,7 @@ const formatAIResponse = (response) => {
     const reasoningContent = response.choices[0].message.reasoning_content;
     
     return {
-        reasoning: reasoningContent ? reasoningContent : null,
+        reasoning: reasoningContent ? `||🤔 Chain of Thought:\n${reasoningContent}||` : null,
         response: content
     };
 };
