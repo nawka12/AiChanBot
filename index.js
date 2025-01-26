@@ -182,21 +182,9 @@ const splitMessage = (content) => {
     });
 };
 
-// Helper function to format AI response
+// Remove formatAIResponse function since we no longer use reasoning
 const formatAIResponse = (response) => {
-    const reasoning = response.choices[0].message.reasoning_content;
-    const content = response.choices[0].message.content;
-    
-    if (reasoning) {
-        // Truncate reasoning if it's too long while preserving the answer
-        const maxReasoningLength = Math.floor(MAX_MESSAGE_LENGTH * 0.6); // Use 60% of max length for reasoning
-        const truncatedReasoning = reasoning.length > maxReasoningLength 
-            ? reasoning.substring(0, maxReasoningLength) + '...'
-            : reasoning;
-            
-        return `**Reasoning:**\n${truncatedReasoning}\n\n**Answer:**\n${content}`;
-    }
-    return content;
+    return response.choices[0].message.content;
 };
 
 // Main message handler
@@ -209,6 +197,12 @@ client.on('messageCreate', async function(message) {
         if (message.channel.type !== 1 && !message.mentions.has(client.user)) return;
 
         message.channel.sendTyping();
+
+        // Add timestamp for processing time calculation
+        const startTime = Date.now();
+        
+        // Send "Thinking..." message
+        const thinkingMsg = await message.reply("Thinking...");
 
         const input = message.content
             .replace(`<@${client.user.id}>`, '')
@@ -318,21 +312,26 @@ client.on('messageCreate', async function(message) {
                 ],
             });
 
-            // Format response with reasoning if available
+            // Calculate processing time
+            const processingTime = Date.now() - startTime;
+            
+            // Update the thinking message
+            await thinkingMsg.edit(`Done! Thinked for ${processingTime}ms.`);
+
             const responseContent = formatAIResponse(response);
 
-            // Update conversation history with only the content, not reasoning
+            // Update conversation history
             if (isDM) {
                 userConversations[message.author.id].push({ role: "user", content: input });
                 userConversations[message.author.id].push({ 
                     role: "assistant", 
-                    content: response.choices[0].message.content  // Store only final content
+                    content: response.choices[0].message.content
                 });
             } else {
                 guildConversations[guildId].push({ role: "user", content: processedInput });
                 guildConversations[guildId].push({ 
                     role: "assistant", 
-                    content: response.choices[0].message.content  // Store only final content
+                    content: response.choices[0].message.content
                 });
             }
 
@@ -344,19 +343,12 @@ client.on('messageCreate', async function(message) {
                     await message.channel.send(messageParts[i]);
                 } else {
                     // For guild messages
-                    if (i === 0) {
-                        await message.reply({
-                            content: messageParts[i],
-                            allowedMentions: { repliedUser: true },
-                        });
-                    } else {
-                        await message.channel.send(messageParts[i]);
-                    }
+                    await message.channel.send(messageParts[i]);
                 }
             }
         } catch (error) {
             console.error("API Error:", error);
-            await message.reply(`There was an error processing your request.`);
+            await thinkingMsg.edit("There was an error processing your request.");
         }
     } catch (err) {
         console.error("General Error:", err);
