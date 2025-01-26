@@ -196,20 +196,54 @@ const splitMessage = (content) => {
 
     const parts = [];
     let currentPart = '';
-
-    content.split('\n').forEach((line) => {
-        if ((currentPart + line).length > MAX_MESSAGE_LENGTH) {
-            parts.push(currentPart);
-            currentPart = '';
+    
+    // Split by double newlines first to try to keep logical sections together
+    const sections = content.split('\n\n');
+    
+    for (const section of sections) {
+        // If a single section is longer than the limit, split it by single newlines
+        if (section.length > MAX_MESSAGE_LENGTH) {
+            const lines = section.split('\n');
+            for (const line of lines) {
+                // If adding this line would exceed the limit, start a new part
+                if ((currentPart + '\n' + line).length > MAX_MESSAGE_LENGTH) {
+                    if (currentPart) {
+                        parts.push(currentPart.trim());
+                    }
+                    currentPart = '';
+                    
+                    // If a single line is too long, split it into chunks
+                    if (line.length > MAX_MESSAGE_LENGTH) {
+                        const chunks = line.match(new RegExp(`.{1,${MAX_MESSAGE_LENGTH}}`, 'g')) || [];
+                        parts.push(...chunks.slice(0, -1));
+                        currentPart = chunks[chunks.length - 1] || '';
+                    } else {
+                        currentPart = line;
+                    }
+                } else {
+                    currentPart += (currentPart ? '\n' : '') + line;
+                }
+            }
+        } else if ((currentPart + '\n\n' + section).length > MAX_MESSAGE_LENGTH) {
+            // If adding this section would exceed the limit, start a new part
+            parts.push(currentPart.trim());
+            currentPart = section;
+        } else {
+            // Add section to current part
+            currentPart += (currentPart ? '\n\n' : '') + section;
         }
-        currentPart += `${line}\n`;
-    });
-
-    if (currentPart.length > 0) {
-        parts.push(currentPart);
     }
 
-    return parts;
+    // Add the last part if there is one
+    if (currentPart) {
+        parts.push(currentPart.trim());
+    }
+
+    // Ensure no part exceeds the limit
+    return parts.map(part => {
+        if (part.length <= MAX_MESSAGE_LENGTH) return part;
+        return part.substring(0, MAX_MESSAGE_LENGTH);
+    });
 };
 
 // Helper function to format AI response
@@ -217,9 +251,14 @@ const formatAIResponse = (response) => {
     const reasoning = response.choices[0].message.reasoning_content;
     const content = response.choices[0].message.content;
     
-    // If there's reasoning content, format it with the final answer
     if (reasoning) {
-        return `**Reasoning:**\n${reasoning}\n\n**Answer:**\n${content}`;
+        // Truncate reasoning if it's too long while preserving the answer
+        const maxReasoningLength = Math.floor(MAX_MESSAGE_LENGTH * 0.6); // Use 60% of max length for reasoning
+        const truncatedReasoning = reasoning.length > maxReasoningLength 
+            ? reasoning.substring(0, maxReasoningLength) + '...'
+            : reasoning;
+            
+        return `**Reasoning:**\n${truncatedReasoning}\n\n**Answer:**\n${content}`;
     }
     return content;
 };
