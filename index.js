@@ -219,8 +219,8 @@ const splitMessage = (content) => {
 // Main message handler
 client.on('messageCreate', async function(message) {
     try {
-        // If it's a bot message, ignore it
-        if (message.author.bot) return;
+        // If it's a bot message or @everyone/@here, ignore it
+        if (message.author.bot || message.content.includes('@everyone') || message.content.includes('@here')) return;
 
         // Allow both DMs and mentions in servers
         if (message.channel.type !== 1 && !message.mentions.has(client.user)) return;
