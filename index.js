@@ -7,6 +7,7 @@ const fetch = require('node-fetch');
 
 // Constants
 const AI_MODEL = 'deepseek-reasoner';
+const AI_QUERY_MODEL = 'deepseek-chat';  // New constant for queries and context
 const MAX_TOKENS = 8192;
 const MAX_SEARCH_RESULTS = 3;
 const MAX_MESSAGE_LENGTH = 2000;
@@ -57,74 +58,11 @@ const userConversations = {}; // For DM conversations
 const guildConversations = {}; // For guild/server conversations
 
 // Helper functions
-const processImages = async (attachments, userId, guildId, input) => {
-    let imageDescriptions = [];
-
-    // Get appropriate conversation history
-    const conversationHistory = guildId ? 
-        (guildConversations[guildId] || []) : 
-        (userConversations[userId] || []);
-
-    for (const [, attachment] of attachments) {
-        if (attachment.contentType.startsWith('image/')) {
-            const imageResponse = await fetch(attachment.url);
-            const imageBuffer = await imageResponse.buffer();
-            const base64Image = imageBuffer.toString('base64');
-
-            const imageContent = {
-                type: "image",
-                source: {
-                    type: "base64",
-                    media_type: attachment.contentType,
-                    data: base64Image
-                }
-            };
-
-            const imageAI = await openai.chat.completions.create({
-                model: AI_MODEL,
-                max_tokens: MAX_TOKENS,
-                messages: [
-                    { role: "system", content: `${config.systemMessage('offline', userId)} Describe the image concisely and answer the user's question if provided.` },
-                    ...conversationHistory,
-                    {
-                        role: "user",
-                        content: `[Image URL: ${attachment.url}] ${input || "What's in this image?"}`
-                    }
-                ]
-            });
-
-            const imageDescription = formatAIResponse(imageAI);
-            imageDescriptions.push(imageDescription);
-
-            // Update conversation history - store only the content, not reasoning
-            const historyEntry = {
-                role: "assistant",
-                content: imageAI.choices[0].message.content
-            };
-
-            if (guildId) {
-                if (!guildConversations[guildId]) {
-                    guildConversations[guildId] = [];
-                }
-                guildConversations[guildId].push({
-                    role: "user",
-                    content: [{ type: "text", text: `[Image] ${input}` }]
-                });
-                guildConversations[guildId].push(historyEntry);
-            } else {
-                if (!userConversations[userId]) {
-                    userConversations[userId] = [];
-                }
-                userConversations[userId].push({
-                    role: "user",
-                    content: [{ type: "text", text: `[Image] ${input}` }]
-                });
-                userConversations[userId].push(historyEntry);
-            }
-        }
+const processImages = async (attachments) => {
+    if (attachments.size > 0) {
+        return "I'm sorry, I do not support images yet. Please remove the image and try again.";
     }
-
-    return imageDescriptions.join('\n\n');
+    return '';
 };
 
 const processContext = async (userId, guildId, messageCount = 10) => {
@@ -134,7 +72,6 @@ const processContext = async (userId, guildId, messageCount = 10) => {
     
     if (!conversationHistory || conversationHistory.length < 2) return '';
 
-    // Take last N messages instead of just 2
     const recentConversations = conversationHistory
         .slice(-messageCount)
         .map(conv => {
@@ -150,7 +87,7 @@ const processContext = async (userId, guildId, messageCount = 10) => {
         .join('\n');
 
     const contextAI = await openai.chat.completions.create({
-        model: AI_MODEL,
+        model: AI_QUERY_MODEL,  // Using deepseek-chat
         max_tokens: 200,
         messages: [
             { role: "system", content: config.contextSystemMessage },
@@ -158,7 +95,6 @@ const processContext = async (userId, guildId, messageCount = 10) => {
         ],
     });
     
-    // Only use the final content, not reasoning, for context
     const contextSummary = contextAI.choices[0].message.content;
     console.log(`Generated context for ${userId}:`, contextSummary);
     return contextSummary;
@@ -313,32 +249,11 @@ client.on('messageCreate', async function(message) {
             return;
         }
 
-        let imageDescriptions = '';
+        // Check for attachments first
         if (message.attachments.size > 0) {
-            try {
-                imageDescriptions = await processImages(message.attachments, message.author.id, guildId, input);
-                console.log(`Images processed. Descriptions: ${imageDescriptions}`);
-                
-                // If it's offline mode, send the image descriptions as the response
-                if (command !== 'search' && command !== 'deepsearch') {
-                    const messageParts = splitMessage(imageDescriptions);
-                    for (let i = 0; i < messageParts.length; i++) {
-                        if (i === 0) {
-                            await message.reply({
-                                content: messageParts[i],
-                                allowedMentions: { repliedUser: true },
-                            });
-                        } else {
-                            await message.channel.send(messageParts[i]);
-                        }
-                    }
-                    return; // Exit the function here for offline mode with images
-                }
-            } catch (error) {
-                console.error("Error processing images:", error);
-                await message.reply("Sorry, there was an error processing the images.");
-                return;
-            }
+            const response = await processImages(message.attachments);
+            await message.reply(response);
+            return;
         }
 
         let messages = [];
@@ -348,12 +263,10 @@ client.on('messageCreate', async function(message) {
             try {
                 const context = await processContext(message.author.id, guildId, 10);
                 
-                const queryContext = `${context ? `Context: ${context}\n` : ''}${
-                    imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''
-                }Question: ${commandContent}`;
+                const queryContext = `${context ? `Context: ${context}\n` : ''}Question: ${commandContent}`;
 
                 const queryAI = await openai.chat.completions.create({
-                    model: AI_MODEL,
+                    model: AI_QUERY_MODEL,  // Using deepseek-chat
                     max_tokens: 100,
                     temperature: 0.7,
                     messages: [
@@ -384,9 +297,6 @@ client.on('messageCreate', async function(message) {
             }
         } else {
             messages.push({ role: "user", content: processedInput });
-            if (imageDescriptions) {
-                messages.push({ role: "assistant", content: imageDescriptions });
-            }
         }
 
         // Get the appropriate conversation history
