@@ -198,12 +198,6 @@ client.on('messageCreate', async function(message) {
 
         message.channel.sendTyping();
 
-        // Add timestamp for processing time calculation
-        const startTime = Date.now();
-        
-        // Send "Thinking..." message
-        const thinkingMsg = await message.reply("Thinking...");
-
         const input = message.content
             .replace(`<@${client.user.id}>`, '')
             .replace(/<@&\d+>/g, '')
@@ -215,6 +209,24 @@ client.on('messageCreate', async function(message) {
 
         const isDM = message.channel.type === 1;
         const guildId = isDM ? null : message.guild.id;
+
+        // Handle reset command before sending "Thinking..." message
+        if (command === 'reset') {
+            if (isDM) {
+                userConversations[message.author.id] = [];
+                await message.reply("Ai-chan's personal conversations with you have been reset.");
+            } else {
+                guildConversations[guildId] = [];
+                await message.reply("Ai-chan's server conversations have been reset.");
+            }
+            return;
+        }
+
+        // Add timestamp for processing time calculation
+        const startTime = Date.now();
+        
+        // Send "Thinking..." message
+        const thinkingMsg = await message.reply("Thinking...");
 
         // Modify the input to include username for guild messages
         const processedInput = isDM ? 
@@ -230,24 +242,6 @@ client.on('messageCreate', async function(message) {
             if (!guildConversations[guildId]) {
                 guildConversations[guildId] = [];
             }
-        }
-
-        if (command === 'reset') {
-            if (isDM) {
-                userConversations[message.author.id] = [];
-                await message.reply("Ai-chan's personal conversations with you have been reset.");
-            } else {
-                guildConversations[guildId] = [];
-                await message.reply("Ai-chan's server conversations have been reset.");
-            }
-            return;
-        }
-
-        // Check for attachments first
-        if (message.attachments.size > 0) {
-            const response = await processImages(message.attachments);
-            await message.reply(response);
-            return;
         }
 
         let messages = [];
