@@ -336,15 +336,6 @@ client.on('messageCreate', async function(message) {
 
             const { reasoning, response: responseContent } = formatAIResponse(response);
 
-            // Update conversation history
-            updateConversationHistory(
-                isDM, 
-                message.author.id, 
-                guildId, 
-                isDM ? input : processedInput, 
-                response
-            );
-
             // Send reasoning first if it exists
             if (reasoning) {
                 const reasoningParts = splitMessage(reasoning, true);
@@ -354,10 +345,19 @@ client.on('messageCreate', async function(message) {
             }
 
             // Send the main response
-            const responseParts = splitMessage(response);
+            const responseParts = splitMessage(responseContent);
             for (const part of responseParts) {
                 await message.channel.send(part);
             }
+
+            // Update conversation history with only the response content
+            updateConversationHistory(
+                isDM, 
+                message.author.id, 
+                guildId, 
+                isDM ? input : processedInput, 
+                { choices: [{ message: { content: responseContent } }]
+            });
 
         } catch (error) {
             console.error("API Error:", error);
