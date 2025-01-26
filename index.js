@@ -125,32 +125,30 @@ const formatSearchResults = (results, commandContent) => {
     return `Here's more data from the web about my question:\n\n${results.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n')}\n\nMy question is: ${commandContent}`;
 };
 
-const splitMessage = (content) => {
-    if (content.length <= MAX_MESSAGE_LENGTH) {
+// Update splitMessage to handle spoiler tags
+const splitMessage = (content, isReasoning = false) => {
+    const MAX_LENGTH = isReasoning ? MAX_MESSAGE_LENGTH - 4 : MAX_MESSAGE_LENGTH; // Account for spoiler tags
+    
+    if (content.length <= MAX_LENGTH) {
         return [content];
     }
 
     const parts = [];
     let currentPart = '';
-    
-    // Split by double newlines first to try to keep logical sections together
     const sections = content.split('\n\n');
     
     for (const section of sections) {
-        // If a single section is longer than the limit, split it by single newlines
-        if (section.length > MAX_MESSAGE_LENGTH) {
+        if (section.length > MAX_LENGTH) {
             const lines = section.split('\n');
             for (const line of lines) {
-                // If adding this line would exceed the limit, start a new part
-                if ((currentPart + '\n' + line).length > MAX_MESSAGE_LENGTH) {
+                if ((currentPart + '\n' + line).length > MAX_LENGTH) {
                     if (currentPart) {
                         parts.push(currentPart.trim());
                     }
                     currentPart = '';
                     
-                    // If a single line is too long, split it into chunks
-                    if (line.length > MAX_MESSAGE_LENGTH) {
-                        const chunks = line.match(new RegExp(`.{1,${MAX_MESSAGE_LENGTH}}`, 'g')) || [];
+                    if (line.length > MAX_LENGTH) {
+                        const chunks = line.match(new RegExp(`.{1,${MAX_LENGTH}}`, 'g')) || [];
                         parts.push(...chunks.slice(0, -1));
                         currentPart = chunks[chunks.length - 1] || '';
                     } else {
@@ -160,40 +158,40 @@ const splitMessage = (content) => {
                     currentPart += (currentPart ? '\n' : '') + line;
                 }
             }
-        } else if ((currentPart + '\n\n' + section).length > MAX_MESSAGE_LENGTH) {
-            // If adding this section would exceed the limit, start a new part
+        } else if ((currentPart + '\n\n' + section).length > MAX_LENGTH) {
             parts.push(currentPart.trim());
             currentPart = section;
         } else {
-            // Add section to current part
             currentPart += (currentPart ? '\n\n' : '') + section;
         }
     }
 
-    // Add the last part if there is one
     if (currentPart) {
         parts.push(currentPart.trim());
     }
 
-    // Ensure no part exceeds the limit
-    return parts.map(part => {
-        if (part.length <= MAX_MESSAGE_LENGTH) return part;
-        return part.substring(0, MAX_MESSAGE_LENGTH);
-    });
+    // If this is reasoning content, wrap each part in spoiler tags
+    if (isReasoning) {
+        return parts.map((part, index) => {
+            if (index === 0) {
+                return `||🤔 Chain of Thought (Part ${parts.length > 1 ? '1/' + parts.length : '1/1'}):\n${part}||`;
+            }
+            return `||Chain of Thought (Part ${index + 1}/${parts.length}):\n${part}||`;
+        });
+    }
+
+    return parts;
 };
 
-// Update formatAIResponse to use the dedicated reasoning_content field
+// Update formatAIResponse to separate reasoning and response
 const formatAIResponse = (response) => {
     const content = response.choices[0].message.content;
     const reasoningContent = response.choices[0].message.reasoning_content;
     
-    if (reasoningContent) {
-        // Return reasoning in spoiler tags followed by the response
-        return `||🤔 Chain of Thought:\n${reasoningContent}||\n\n${content}`;
-    }
-    
-    // If no reasoning content, return just the response
-    return content;
+    return {
+        reasoning: reasoningContent ? reasoningContent : null,
+        response: content
+    };
 };
 
 // Update conversation history to not include reasoning content
@@ -336,9 +334,9 @@ client.on('messageCreate', async function(message) {
             // Update the thinking message with seconds
             await thinkingMsg.edit(`Done! Thinked for ${processingTime}s.`);
 
-            const responseContent = formatAIResponse(response);
+            const { reasoning, response: responseContent } = formatAIResponse(response);
 
-            // Update conversation history without reasoning content
+            // Update conversation history
             updateConversationHistory(
                 isDM, 
                 message.author.id, 
@@ -347,15 +345,20 @@ client.on('messageCreate', async function(message) {
                 response
             );
 
-            const messageParts = splitMessage(responseContent);
-
-            for (let i = 0; i < messageParts.length; i++) {
-                if (message.channel.type === 1) {
-                    await message.channel.send(messageParts[i]);
-                } else {
-                    await message.channel.send(messageParts[i]);
+            // Send reasoning first if it exists
+            if (reasoning) {
+                const reasoningParts = splitMessage(reasoning, true);
+                for (const part of reasoningParts) {
+                    await message.channel.send(part);
                 }
             }
+
+            // Send the main response
+            const responseParts = splitMessage(response);
+            for (const part of responseParts) {
+                await message.channel.send(part);
+            }
+
         } catch (error) {
             console.error("API Error:", error);
             await thinkingMsg.edit("There was an error processing your request.");
@@ -381,3 +384,4 @@ client.once('ready', () => {
         status: 'online'
     });
 });
+
