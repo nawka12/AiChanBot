@@ -362,11 +362,24 @@ client.on('messageCreate', async function(message) {
                     ],
                 });
 
+                if (!queryAI.choices?.[0]?.message?.content) {
+                    throw new Error('No search query generated');
+                }
+
                 searchContent = await performSearch(command, queryAI, commandContent, message);
+                if (!searchContent) {
+                    throw new Error('No search results found');
+                }
+                
                 messages.push({ role: "user", content: searchContent });
             } catch (error) {
                 console.error("Search Error:", error);
-                await message.reply(`There was an error processing your search request.`);
+                // Only reply with error if it's actually an error, not just empty results
+                if (error.message === 'No search results found') {
+                    await message.reply('No search results found for your query.');
+                } else {
+                    await message.reply('There was an error processing your search request.');
+                }
                 return;
             }
         } else {
