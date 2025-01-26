@@ -182,9 +182,32 @@ const splitMessage = (content) => {
     });
 };
 
-// Remove formatAIResponse function since we no longer use reasoning
+// Update formatAIResponse to use the dedicated reasoning_content field
 const formatAIResponse = (response) => {
-    return response.choices[0].message.content;
+    const content = response.choices[0].message.content;
+    const reasoningContent = response.choices[0].message.reasoning_content;
+    
+    if (reasoningContent) {
+        // Return reasoning in spoiler tags followed by the response
+        return `||🤔 Chain of Thought:\n${reasoningContent}||\n\n${content}`;
+    }
+    
+    // If no reasoning content, return just the response
+    return content;
+};
+
+// Update conversation history to not include reasoning content
+const updateConversationHistory = (isDM, userId, guildId, input, response) => {
+    const conversationHistory = isDM ? userConversations[userId] : guildConversations[guildId];
+    
+    // Add user message
+    conversationHistory.push({ role: "user", content: input });
+    
+    // Add assistant message (only the final response, not the reasoning)
+    conversationHistory.push({ 
+        role: "assistant", 
+        content: response.choices[0].message.content // Only store the final response
+    });
 };
 
 // Main message handler
@@ -256,7 +279,7 @@ client.on('messageCreate', async function(message) {
                 const queryAI = await openai.chat.completions.create({
                     model: AI_QUERY_MODEL,
                     max_tokens: 100,
-                    temperature: 0.3,
+                    temperature: 0.6,  // Updated temperature
                     messages: [
                         { role: "system", content: command === 'search' ? config.querySystemMessage(message.author.username) : config.queryDeepSystemMessage(message.author.username) },
                         { role: "user", content: queryContext }
@@ -300,7 +323,7 @@ client.on('messageCreate', async function(message) {
             const response = await openai.chat.completions.create({
                 model: AI_MODEL,
                 max_tokens: MAX_TOKENS,
-                temperature: 0.3,
+                temperature: 0.6,
                 messages: [
                     { role: "system", content: config.systemMessage(command, message.author.username) },
                     ...messages
@@ -315,29 +338,21 @@ client.on('messageCreate', async function(message) {
 
             const responseContent = formatAIResponse(response);
 
-            // Update conversation history
-            if (isDM) {
-                userConversations[message.author.id].push({ role: "user", content: input });
-                userConversations[message.author.id].push({ 
-                    role: "assistant", 
-                    content: response.choices[0].message.content
-                });
-            } else {
-                guildConversations[guildId].push({ role: "user", content: processedInput });
-                guildConversations[guildId].push({ 
-                    role: "assistant", 
-                    content: response.choices[0].message.content
-                });
-            }
+            // Update conversation history without reasoning content
+            updateConversationHistory(
+                isDM, 
+                message.author.id, 
+                guildId, 
+                isDM ? input : processedInput, 
+                response
+            );
 
             const messageParts = splitMessage(responseContent);
 
             for (let i = 0; i < messageParts.length; i++) {
                 if (message.channel.type === 1) {
-                    // For DMs
                     await message.channel.send(messageParts[i]);
                 } else {
-                    // For guild messages
                     await message.channel.send(messageParts[i]);
                 }
             }
