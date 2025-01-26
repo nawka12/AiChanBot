@@ -2,11 +2,11 @@ require('dotenv').config();
 
 const { searchQuery } = require('./searchlogic.js');
 const { Client, GatewayIntentBits, Partials, ActivityType } = require('discord.js');
-const Anthropic = require('@anthropic-ai/sdk');
+const OpenAI = require('openai');
 const fetch = require('node-fetch');
 
 // Constants
-const AI_MODEL = 'claude-3-5-sonnet-latest';
+const AI_MODEL = 'deepseek-reasoner';
 const MAX_TOKENS = 8192;
 const MAX_SEARCH_RESULTS = 3;
 const MAX_MESSAGE_LENGTH = 2000;
@@ -17,6 +17,7 @@ const TIME_OPTIONS = {
     hour12: false,
     timeZone: 'Asia/Jakarta'  // GMT+7 timezone (Indonesia)
 };
+const MAX_REASONING_TOKENS = 32768; // Maximum tokens for Chain of Thought reasoning
 
 // Add new variable to store startup time
 const startupTime = new Date();
@@ -46,8 +47,9 @@ const client = new Client({
     ]
 });
 
-const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
+const openai = new OpenAI({
+    baseURL: 'https://api.deepseek.com',
+    apiKey: process.env.DEEPSEEK_API_KEY,
 });
 
 // State management
@@ -78,29 +80,28 @@ const processImages = async (attachments, userId, guildId, input) => {
                 }
             };
 
-            const imageAI = await anthropic.messages.create({
+            const imageAI = await openai.chat.completions.create({
                 model: AI_MODEL,
                 max_tokens: MAX_TOKENS,
-                system: `${config.systemMessage('offline', userId)} Describe the image concisely and answer the user's question if provided.`,
                 messages: [
+                    { role: "system", content: `${config.systemMessage('offline', userId)} Describe the image concisely and answer the user's question if provided.` },
                     ...conversationHistory,
                     {
                         role: "user",
-                        content: [
-                            imageContent,
-                            {
-                                type: "text",
-                                text: input || "What's in this image?"
-                            }
-                        ]
+                        content: `[Image URL: ${attachment.url}] ${input || "What's in this image?"}`
                     }
                 ]
             });
 
-            const imageDescription = imageAI.content[0].text;
+            const imageDescription = formatAIResponse(imageAI);
             imageDescriptions.push(imageDescription);
 
-            // Add image description to the appropriate conversation history
+            // Update conversation history - store only the content, not reasoning
+            const historyEntry = {
+                role: "assistant",
+                content: imageAI.choices[0].message.content
+            };
+
             if (guildId) {
                 if (!guildConversations[guildId]) {
                     guildConversations[guildId] = [];
@@ -109,10 +110,7 @@ const processImages = async (attachments, userId, guildId, input) => {
                     role: "user",
                     content: [{ type: "text", text: `[Image] ${input}` }]
                 });
-                guildConversations[guildId].push({
-                    role: "assistant",
-                    content: imageDescription
-                });
+                guildConversations[guildId].push(historyEntry);
             } else {
                 if (!userConversations[userId]) {
                     userConversations[userId] = [];
@@ -121,10 +119,7 @@ const processImages = async (attachments, userId, guildId, input) => {
                     role: "user",
                     content: [{ type: "text", text: `[Image] ${input}` }]
                 });
-                userConversations[userId].push({
-                    role: "assistant",
-                    content: imageDescription
-                });
+                userConversations[userId].push(historyEntry);
             }
         }
     }
@@ -154,29 +149,30 @@ const processContext = async (userId, guildId, messageCount = 10) => {
         })
         .join('\n');
 
-    const contextAI = await anthropic.messages.create({
+    const contextAI = await openai.chat.completions.create({
         model: AI_MODEL,
         max_tokens: 200,
-        system: config.contextSystemMessage,
         messages: [
-            {"role": "user", "content": recentConversations}
+            { role: "system", content: config.contextSystemMessage },
+            { role: "user", content: recentConversations }
         ],
     });
     
-    const contextSummary = contextAI.content[0].text;
+    // Only use the final content, not reasoning, for context
+    const contextSummary = contextAI.choices[0].message.content;
     console.log(`Generated context for ${userId}:`, contextSummary);
     return contextSummary;
 };
 
 const performSearch = async (command, queryAI, commandContent, message) => {
     if (command === 'search') {
-        const finalQuery = queryAI.content[0].text;
+        const finalQuery = queryAI.choices[0].message.content;
         await message.channel.send(`Searching the web for \`${finalQuery}\``);
         const searchResult = await searchQuery(finalQuery);
         const results = searchResult.results.slice(0, MAX_SEARCH_RESULTS);
         return formatSearchResults(results, commandContent);
     } else if (command === 'deepsearch') {
-        const queries = queryAI.content[0].text.split(',').map(q => q.trim());
+        const queries = queryAI.choices[0].message.content.split(',').map(q => q.trim());
         let allResults = [];
         
         for (let query of queries) {
@@ -214,6 +210,18 @@ const splitMessage = (content) => {
     }
 
     return parts;
+};
+
+// Helper function to format AI response
+const formatAIResponse = (response) => {
+    const reasoning = response.choices[0].message.reasoning_content;
+    const content = response.choices[0].message.content;
+    
+    // If there's reasoning content, format it with the final answer
+    if (reasoning) {
+        return `**Reasoning:**\n${reasoning}\n\n**Answer:**\n${content}`;
+    }
+    return content;
 };
 
 // Main message handler
@@ -305,13 +313,13 @@ client.on('messageCreate', async function(message) {
                     imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''
                 }Question: ${commandContent}`;
 
-                const queryAI = await anthropic.messages.create({
+                const queryAI = await openai.chat.completions.create({
                     model: AI_MODEL,
                     max_tokens: 100,
                     temperature: 0.7,
-                    system: command === 'search' ? config.querySystemMessage(message.author.username) : config.queryDeepSystemMessage(message.author.username),
                     messages: [
-                        {"role": "user", "content": queryContext}
+                        { role: "system", content: command === 'search' ? config.querySystemMessage(message.author.username) : config.queryDeepSystemMessage(message.author.username) },
+                        { role: "user", content: queryContext }
                     ],
                 });
 
@@ -339,29 +347,34 @@ client.on('messageCreate', async function(message) {
         console.log("Messages to be sent to API:", JSON.stringify(messages, null, 2));
 
         try {
-            const response = await anthropic.messages.create({
+            const response = await openai.chat.completions.create({
                 model: AI_MODEL,
                 max_tokens: MAX_TOKENS,
-                system: config.systemMessage(command, message.author.username),
-                messages: messages,
+                messages: [
+                    { role: "system", content: config.systemMessage(command, message.author.username) },
+                    ...messages
+                ],
             });
 
-            // Update the appropriate conversation history
+            // Format response with reasoning if available
+            const responseContent = formatAIResponse(response);
+
+            // Update conversation history with only the content, not reasoning
             if (isDM) {
                 userConversations[message.author.id].push({ role: "user", content: input });
                 userConversations[message.author.id].push({ 
                     role: "assistant", 
-                    content: response.content[0].text 
+                    content: response.choices[0].message.content  // Store only final content
                 });
             } else {
                 guildConversations[guildId].push({ role: "user", content: processedInput });
                 guildConversations[guildId].push({ 
                     role: "assistant", 
-                    content: response.content[0].text 
+                    content: response.choices[0].message.content  // Store only final content
                 });
             }
 
-            const messageParts = splitMessage(response.content[0].text);
+            const messageParts = splitMessage(responseContent);
 
             for (let i = 0; i < messageParts.length; i++) {
                 if (message.channel.type === 1) {
