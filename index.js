@@ -125,7 +125,7 @@ const performSearch = async (command, queryAI, commandContent, message) => {
 };
 
 const formatSearchResults = (results, commandContent) => {
-    return `Here's more data from the web about my question:\n\n${results.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n')}\n\nMy question is: ${commandContent}`;
+    return `Search results for query: "${commandContent}"\n\n${results.map(result => `URL: ${result.url}\nTitle: ${result.title}\nContent: ${result.content}`).join('\n\n')}`;
 };
 
 // Update splitMessage to handle spoiler tags
@@ -331,7 +331,7 @@ client.on('messageCreate', async function(message) {
                 const queryAI = await openai.chat.completions.create({
                     model: AI_QUERY_MODEL,
                     max_tokens: 100,
-                    temperature: 0.6,  // Updated temperature
+                    temperature: 0.6,
                     messages: [
                         { role: "system", content: command === 'search' ? config.querySystemMessage(message.author.username) : config.queryDeepSystemMessage(message.author.username) },
                         { role: "user", content: queryContext }
@@ -347,10 +347,9 @@ client.on('messageCreate', async function(message) {
                     throw new Error('No search results found');
                 }
                 
-                messages.push({ role: "user", content: searchContent });
+                messages.push({ role: "system", content: searchContent });
             } catch (error) {
                 console.error("Search Error:", error);
-                // Only reply with error if it's actually an error, not just empty results
                 if (error.message === 'No search results found') {
                     await message.reply('No search results found for your query.');
                 } else {
