@@ -125,7 +125,7 @@ const performSearch = async (command, queryAI, commandContent, message) => {
 };
 
 const formatSearchResults = (results, commandContent) => {
-    return `Search results for query: "${commandContent}"\n\n${results.map(result => `URL: ${result.url}\nTitle: ${result.title}\nContent: ${result.content}`).join('\n\n')}`;
+    return `Here's more data from the web about my question:\n\n${results.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n')}\n\nMy question is: ${commandContent}`;
 };
 
 // Update splitMessage to handle spoiler tags
@@ -353,8 +353,7 @@ client.on('messageCreate', async function(message) {
                     throw new Error('No search results found');
                 }
                 
-                messages.push({ role: "system", content: searchContent });
-                messages.push({ role: "user", content: commandContent });
+                messages.push({ role: "user", content: searchContent });
             } catch (error) {
                 console.error("Search Error:", error);
                 if (error.message === 'No search results found') {
