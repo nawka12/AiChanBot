@@ -133,7 +133,8 @@ const splitMessage = (content, isReasoning = false) => {
     const MAX_LENGTH = MAX_MESSAGE_LENGTH - 4; // Account for spoiler tags
     
     if (content.length <= MAX_LENGTH) {
-        return [content];
+        // Even for single parts, we need to wrap reasoning in spoiler tags
+        return isReasoning ? [`||Chain of Thought:\n${content}||`] : [content];
     }
 
     const parts = [];
@@ -176,8 +177,8 @@ const splitMessage = (content, isReasoning = false) => {
     // If this is reasoning content, wrap each part in spoiler tags
     if (isReasoning) {
         return parts.map((part, index) => {
-            if (index === 0) {
-                return `||Chain of Thought (Part ${parts.length > 1 ? '1/' + parts.length : '1/1'}):\n${part}||`;
+            if (parts.length === 1) {
+                return `||Chain of Thought:\n${part}||`;
             }
             return `||Chain of Thought (Part ${index + 1}/${parts.length}):\n${part}||`;
         });
