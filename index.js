@@ -177,7 +177,7 @@ const splitMessage = (content, isReasoning = false) => {
     if (isReasoning) {
         return parts.map((part, index) => {
             if (index === 0) {
-                return `||🤔 Chain of Thought (Part ${parts.length > 1 ? '1/' + parts.length : '1/1'}):\n${part}||`;
+                return `||Chain of Thought (Part ${parts.length > 1 ? '1/' + parts.length : '1/1'}):\n${part}||`;
             }
             return `||Chain of Thought (Part ${index + 1}/${parts.length}):\n${part}||`;
         });
@@ -195,7 +195,7 @@ const formatAIResponse = (response, userId) => {
     const showCoT = userPreferences.get(userId) ?? false;
     
     return {
-        reasoning: showCoT && reasoningContent ? `||🤔 Chain of Thought:\n${reasoningContent}||` : null,
+        reasoning: showCoT && reasoningContent ? reasoningContent : null,
         response: content
     };
 };
