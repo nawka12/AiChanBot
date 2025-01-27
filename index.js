@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const { searchQuery } = require('./searchlogic.js');
-const { Client, GatewayIntentBits, Partials, ActivityType } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActivityType, SlashCommandBuilder } = require('discord.js');
 const OpenAI = require('openai');
 const fetch = require('node-fetch');
 
@@ -22,6 +22,9 @@ const MAX_REASONING_TOKENS = 32768; // Maximum tokens for Chain of Thought reaso
 
 // Add new variable to store startup time
 const startupTime = new Date();
+
+// Add at the top with other constants
+const userPreferences = new Map(); // Store user preferences
 
 // Configuration
 const config = {
@@ -184,12 +187,15 @@ const splitMessage = (content, isReasoning = false) => {
 };
 
 // Update formatAIResponse to separate reasoning and response
-const formatAIResponse = (response) => {
+const formatAIResponse = (response, userId) => {
     const content = response.choices[0].message.content;
     const reasoningContent = response.choices[0].message.reasoning_content;
     
+    // Check if user has enabled CoT, default to false if not set
+    const showCoT = userPreferences.get(userId) ?? false;
+    
     return {
-        reasoning: reasoningContent ? `||🤔 Chain of Thought:\n${reasoningContent}||` : null,
+        reasoning: showCoT && reasoningContent ? `||🤔 Chain of Thought:\n${reasoningContent}||` : null,
         response: content
     };
 };
@@ -207,6 +213,54 @@ const updateConversationHistory = (isDM, userId, guildId, input, response) => {
         content: response.choices[0].message.content // Only store the final response
     });
 };
+
+// Add after client initialization
+const commands = [
+    new SlashCommandBuilder()
+        .setName('cot')
+        .setDescription('Toggle Chain of Thought reasoning display')
+        .addStringOption(option =>
+            option.setName('setting')
+                .setDescription('Turn Chain of Thought on or off')
+                .setRequired(true)
+                .addChoices(
+                    { name: 'On', value: 'on' },
+                    { name: 'Off', value: 'off' }
+                )
+        )
+].map(command => command.toJSON());
+
+// Register commands when bot starts
+client.once('ready', async () => {
+    console.log(`Logged in as ${client.user.tag}`);
+    
+    try {
+        await client.application.commands.set(commands);
+        console.log('Slash commands registered');
+    } catch (error) {
+        console.error('Error registering slash commands:', error);
+    }
+    
+    // Set the bot's status message
+    client.user.setPresence({
+        activities: [{
+            name: `Last reset: ${startupTime.toLocaleDateString('en-US', DATE_OPTIONS)} ${startupTime.toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7)`,
+            type: ActivityType.Custom
+        }],
+        status: 'online'
+    });
+});
+
+// Add slash command handler
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isCommand()) return;
+
+    if (interaction.commandName === 'cot') {
+        const setting = interaction.options.getString('setting');
+        userPreferences.set(interaction.user.id, setting === 'on');
+        await interaction.reply(`Chain of Thought has been turned ${setting} for you.`);
+    }
+});
 
 // Main message handler
 client.on('messageCreate', async function(message) {
@@ -334,7 +388,7 @@ client.on('messageCreate', async function(message) {
             // Update the thinking message with seconds
             await thinkingMsg.edit(`Done! Thinked for ${processingTime}s.`);
 
-            const { reasoning, response: responseContent } = formatAIResponse(response);
+            const { reasoning, response: responseContent } = formatAIResponse(response, message.author.id);
 
             // Send reasoning first if it exists
             if (reasoning) {
