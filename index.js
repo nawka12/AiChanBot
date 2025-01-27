@@ -304,6 +304,11 @@ client.on('messageCreate', async function(message) {
         // Send "Thinking..." message
         const thinkingMsg = await message.reply("Thinking...");
 
+        // Add timeout handler
+        const timeoutId = setTimeout(async () => {
+            await thinkingMsg.edit("API timeout, the API might be down. Check <https://status.deepseek.com/> for more information");
+        }, 60000); // 1 minute timeout
+
         // Modify the input to include username for guild messages
         const processedInput = isDM ? 
             input : 
@@ -383,6 +388,9 @@ client.on('messageCreate', async function(message) {
                 ],
             });
 
+            // Clear timeout since we got a response
+            clearTimeout(timeoutId);
+
             // Calculate processing time in seconds
             const processingTime = ((Date.now() - startTime) / 1000).toFixed(2);
             
@@ -415,6 +423,8 @@ client.on('messageCreate', async function(message) {
             });
 
         } catch (error) {
+            // Clear timeout since we got an error
+            clearTimeout(timeoutId);
             console.error("API Error:", error);
             await thinkingMsg.edit("There was an error processing your request.");
         }
