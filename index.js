@@ -183,13 +183,13 @@ const splitMessage = (content, isReasoning = false) => {
     return parts;
 };
 
-// Update formatAIResponse to separate reasoning and response without spoiler tags
+// Update formatAIResponse to separate reasoning and response
 const formatAIResponse = (response) => {
     const content = response.choices[0].message.content;
     const reasoningContent = response.choices[0].message.reasoning_content;
     
     return {
-        reasoning: reasoningContent ? reasoningContent : null, // Remove inner spoiler wrapping
+        reasoning: reasoningContent ? `||🤔 Chain of Thought:\n${reasoningContent}||` : null,
         response: content
     };
 };
