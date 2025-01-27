@@ -348,6 +348,7 @@ client.on('messageCreate', async function(message) {
                 }
                 
                 messages.push({ role: "system", content: searchContent });
+                messages.push({ role: "user", content: commandContent });
             } catch (error) {
                 console.error("Search Error:", error);
                 if (error.message === 'No search results found') {
