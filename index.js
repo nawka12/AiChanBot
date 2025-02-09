@@ -1,26 +1,32 @@
 require('dotenv').config();
 
 const { searchQuery } = require('./searchlogic.js');
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActivityType } = require('discord.js');
 const OpenAI = require('openai');
 const fetch = require('node-fetch');
 
 // Constants
-const AI_MODEL = "gpt-4o";
-const MAX_TOKENS = 4096;
+const AI_MODEL = "o3-mini";
+const MAX_TOKENS = 8192;
 const MAX_SEARCH_RESULTS = 3;
 const MAX_MESSAGE_LENGTH = 2000;
-const DATE_OPTIONS = { day: 'numeric', month: 'long', year: 'numeric' };
+const DATE_OPTIONS = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+const TIME_OPTIONS = { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Jakarta'  // GMT+7 timezone (Indonesia)
+};
 
 // Price per million tokens
-const PROMPT_TOKEN_PRICE = 2.50;     // $2.50 per million tokens
-const COMPLETION_TOKEN_PRICE = 10.00; // $10.00 per million tokens
+const PROMPT_TOKEN_PRICE = 1.10;     // $1.10 per million tokens
+const COMPLETION_TOKEN_PRICE = 4.40; // $4.40 per million tokens
 
 // Configuration
 const config = {
-    systemMessage: (command) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. You have 3 modes; offline, search (connects you to the internet with up to 3 search results), and deepsearch (connects you to the internet with up to 10 search results). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} command.` : "You're using offline mode."} Keep your answer as short as possible.`,
-    querySystemMessage: `Your job is to convert questions into a search query based on context provided. Don't reply with anything other than search query with no quote. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}`,
-    queryDeepSystemMessage: `Your job is to convert questions into search queries based on context provided. Don't reply with anything other than search queries with no quote, separated by comma. Each search query will be performed separately, so make sure to write the queries straight to the point. Always assume you know nothing about the user's question. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}`,
+    systemMessage: (command, username) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. You have 3 modes; offline, search (connects you to the internet with up to 3 search results), and deepsearch (connects you to the internet with up to 10 search results). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} command.` : "You're using offline mode."} Keep your answer as short as possible. You're currently talking to ${username}.`,
+    querySystemMessage: (username) => `Your job is to convert questions into a search query based on context provided. Don't reply with anything other than search query with no quote. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
+    queryDeepSystemMessage: (username) => `Your job is to convert questions into search queries based on context provided. Don't reply with anything other than search queries with no quote, separated by comma. Each search query will be performed separately, so make sure to write the queries straight to the point. Always assume you know nothing about the user's question. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
     contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions.`,
 };
 
@@ -29,7 +35,15 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.DirectMessageTyping,
+        GatewayIntentBits.DirectMessageReactions
+    ],
+    partials: [
+        Partials.Channel,
+        Partials.Message,
+        Partials.User
     ]
 });
 
@@ -39,8 +53,12 @@ const openai = new OpenAI({
 });
 
 // State management
-const userConversations = {};
+const userConversations = {}; // For DM conversations
+const guildConversations = {}; // For guild/server conversations
 const userContexts = {};
+
+// Add new variable to store startup time
+const startupTime = new Date();
 
 // Helper functions
 const processImages = async (attachments, userId, input) => {
@@ -68,7 +86,7 @@ const processImages = async (attachments, userId, input) => {
                         ]
                     }
                 ],
-                max_tokens: MAX_TOKENS
+                max_completion_tokens: MAX_TOKENS
             });
 
             const imageDescription = imageAI.choices[0].message.content;
@@ -102,7 +120,7 @@ const processContext = async (userId) => {
             { role: "system", content: config.contextSystemMessage },
             { role: "user", content: contextPrompt }
         ],
-        max_tokens: 200
+        max_completion_tokens: 200
     });
     
     const finalContext = contextResponse.choices[0].message.content;
@@ -157,11 +175,33 @@ const splitMessage = (content) => {
 // Main message handler
 client.on('messageCreate', async function(message) {
     try {
-        if (message.author.bot || !message.mentions.has(client.user)) return;
+        if (message.author.bot || message.content.includes('@everyone') || message.content.includes('@here')) return;
+
+        // Allow both DMs and mentions in servers
+        if (message.channel.type !== 1 && !message.mentions.has(client.user)) return;
+
+        const isDM = message.channel.type === 1;
+        const guildId = isDM ? null : message.guild.id;
+
+        // Modify the input to include username for guild messages
+        const processedInput = isDM ? 
+            message.content : 
+            `[${message.author.username}]: ${message.content}`;
+
+        // Initialize conversations if they don't exist
+        if (isDM) {
+            if (!userConversations[message.author.id]) {
+                userConversations[message.author.id] = [];
+            }
+        } else {
+            if (!guildConversations[guildId]) {
+                guildConversations[guildId] = [];
+            }
+        }
 
         message.channel.sendTyping();
 
-        const input = message.content
+        const input = processedInput
             .replace(`<@${client.user.id}>`, '')
             .replace(/<@&\d+>/g, '')
             .trim();
@@ -170,9 +210,13 @@ client.on('messageCreate', async function(message) {
         const commandContent = contentParts.join(' ');
 
         if (command === 'reset') {
-            userConversations[message.author.id] = [];
-            userContexts[message.author.id] = '';
-            await message.reply("Ai-chan's conversations with you have been reset.");
+            if (isDM) {
+                userConversations[message.author.id] = [];
+                await message.reply("Ai-chan's personal conversations with you have been reset.");
+            } else {
+                guildConversations[guildId] = [];
+                await message.reply("Ai-chan's server conversations have been reset.");
+            }
             return;
         }
 
@@ -222,11 +266,10 @@ client.on('messageCreate', async function(message) {
                 const queryResponse = await openai.chat.completions.create({
                     model: AI_MODEL,
                     messages: [
-                        { role: "system", content: command === 'search' ? config.querySystemMessage : config.queryDeepSystemMessage },
+                        { role: "system", content: command === 'search' ? config.querySystemMessage(message.author.username) : config.queryDeepSystemMessage(message.author.username) },
                         { role: "user", content: queryContext }
                     ],
-                    temperature: 0.7,
-                    max_tokens: 100
+                    max_completion_tokens: 100
                 });
 
                 searchContent = await performSearch(command, queryResponse, commandContent, message);
@@ -257,11 +300,10 @@ client.on('messageCreate', async function(message) {
             const gptResponse = await openai.chat.completions.create({
                 model: AI_MODEL,
                 messages: [
-                    { role: "system", content: config.systemMessage(command) },
+                    { role: "system", content: config.systemMessage(command, message.author.username) },
                     ...messages
                 ],
-                temperature: 1.0,
-                max_tokens: MAX_TOKENS
+                max_completion_tokens: MAX_TOKENS
             });
 
             userConversations[message.author.id].push({ role: "user", content: input });
@@ -300,6 +342,20 @@ client.on('messageCreate', async function(message) {
     } catch (err) {
         console.error("General Error:", err);
     }
+});
+
+// Add a ready event handler to verify intents
+client.once('ready', () => {
+    console.log(`Logged in as ${client.user.tag}`);
+    
+    // Set the bot's status message
+    client.user.setPresence({
+        activities: [{
+            name: `Last reset: ${startupTime.toLocaleDateString('en-US', DATE_OPTIONS)} ${startupTime.toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7)`,
+            type: ActivityType.Custom
+        }],
+        status: 'online'
+    });
 });
 
 client.login(process.env.DISCORD_TOKEN);
