@@ -129,24 +129,28 @@ const processContext = async (userId) => {
 };
 
 const performSearch = async (command, queryResponse, commandContent, message) => {
-    const queries = queryResponse.choices[0].message.content.split(',').map(q => q.trim());
-    let allResults = [];
-    
-    for (let query of queries) {
-        // Send a message indicating the search query
-        await message.channel.send(`Searching the web for \`${query}\``);
+    if (command === 'search') {
+        const finalQuery = queryResponse.choices[0].message.content;
+        await message.channel.send(`Searching the web for \`${finalQuery}\``);
+        const searchResult = await searchQuery(finalQuery);
+        const results = searchResult.results.slice(0, MAX_SEARCH_RESULTS);
+        return formatSearchResults(results, commandContent);
+    } else if (command === 'deepsearch') {
+        const queries = queryResponse.choices[0].message.content.split(',').map(q => q.trim());
+        let allResults = [];
         
-        const searchResult = await searchQuery(query);
-        allResults = allResults.concat(searchResult.results.slice(0, MAX_SEARCH_RESULTS));
+        for (let query of queries) {
+            await message.channel.send(`Searching the web for \`${query}\``);
+            const searchResult = await searchQuery(query);
+            allResults = allResults.concat(searchResult.results.slice(0, MAX_SEARCH_RESULTS));
+        }
+        
+        return formatSearchResults(allResults, commandContent);
     }
-    
-    const searchContent = `Here's more data from the web about my question:\n\n${allResults.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n')}\n\nMy question is: ${commandContent}`;
-    return searchContent;
 };
 
-const formatSearchResults = (searchResult) => {
-    const results = searchResult.results.slice(0, MAX_SEARCH_RESULTS);
-    return results.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n');
+const formatSearchResults = (results, commandContent) => {
+    return `Here's more data from the web about my question:\n\n${results.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n')}\n\nMy question is: ${commandContent}`;
 };
 
 const splitMessage = (content) => {
