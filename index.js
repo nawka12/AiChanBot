@@ -8,7 +8,7 @@ const fetch = require('node-fetch');
 // Constants
 const AI_MODEL = "o3-mini";
 const MAX_TOKENS = 16384;
-const MAX_SEARCH_RESULTS = 3;
+const MAX_SEARCH_RESULTS = 100;
 const MAX_MESSAGE_LENGTH = 2000;
 const DATE_OPTIONS = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
 const TIME_OPTIONS = { 
