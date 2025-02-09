@@ -142,20 +142,18 @@ const processContext = async (userId, guildId, messageCount = 10) => {
 
 const performSearch = async (command, queryResponse, commandContent, message) => {
     if (command === 'search') {
-        // Make sure we're getting the query correctly from the response
-        const finalQuery = queryResponse.choices[0].message.content.trim();
+        let finalQuery = queryResponse.choices[0].message.content.trim();
         
-        // Don't proceed with empty queries
+        // Fallback: if no query generated, use the original commandContent
         if (!finalQuery) {
-            throw new Error('Empty search query generated');
+            console.warn("Query generation returned empty. Falling back to commandContent as query.");
+            finalQuery = commandContent;
         }
         
-        console.log('Search query:', finalQuery); // Debug log
-        
+        console.log('Search query:', finalQuery);
         await message.channel.send(`Searching the web for \`${finalQuery}\``);
         const searchResult = await searchQuery(finalQuery);
         
-        // Verify searchResult has the expected structure
         if (!searchResult || !searchResult.results) {
             throw new Error('Invalid search results structure');
         }
@@ -163,22 +161,24 @@ const performSearch = async (command, queryResponse, commandContent, message) =>
         const results = searchResult.results.slice(0, MAX_SEARCH_RESULTS);
         return formatSearchResults(results, commandContent);
     } else if (command === 'deepsearch') {
-        const queries = queryResponse.choices[0].message.content.split(',').map(q => q.trim());
+        let queriesRaw = queryResponse.choices[0].message.content;
+        if (!queriesRaw.trim()) {
+            console.warn("Query generation returned empty for deepsearch. Falling back to commandContent.");
+            queriesRaw = commandContent;
+        }
+        const queries = queriesRaw.split(',').map(q => q.trim()).filter(q => q);
         
-        // Don't proceed with empty queries
-        if (!queries.length || !queries[0]) {
+        if (!queries.length) {
             throw new Error('Empty search queries generated');
         }
         
         let allResults = [];
         
         for (let query of queries) {
-            console.log('Deep search query:', query); // Debug log
-            
+            console.log('Deep search query:', query);
             await message.channel.send(`Searching the web for \`${query}\``);
             const searchResult = await searchQuery(query);
             
-            // Verify searchResult has the expected structure
             if (!searchResult || !searchResult.results) {
                 throw new Error('Invalid search results structure');
             }
@@ -304,29 +304,28 @@ client.on('messageCreate', async function(message) {
             try {
                 const context = await processContext(message.author.id, guildId, 10);
                 
+                // Build query context using any existing conversation context and/or image descriptions
                 const queryContext = `${context ? `Context: ${context}\n` : ''}${
                     imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''
                 }Question: ${commandContent}`;
 
-                console.log('Query Context:', queryContext); // Debug log
-
-                // Make the system message more explicit
-                const systemMessage = command === 'search' 
-                    ? `Your job is to convert this question into a single clear search query. Output only the search query with no quotes or additional text: ${config.querySystemMessage(message.author.username)}`
-                    : `Your job is to convert this question into multiple search queries. Output only the queries separated by commas with no quotes or additional text: ${config.queryDeepSystemMessage(message.author.username)}`;
-
-                console.log('System Message:', systemMessage); // Debug log
+                console.log('Query Context:', queryContext);
 
                 const queryResponse = await openai.chat.completions.create({
                     model: AI_MODEL,
                     messages: [
-                        { role: "system", content: systemMessage },
+                        {
+                            role: "system",
+                            content: command === 'search'
+                                ? config.querySystemMessage(message.author.username)
+                                : config.queryDeepSystemMessage(message.author.username)
+                        },
                         { role: "user", content: queryContext }
                     ],
                     max_completion_tokens: 100
                 });
-
-                console.log('Query Response:', queryResponse.choices[0].message.content); // Debug log
+                
+                console.log('Query Response:', queryResponse.choices[0].message.content);
 
                 searchContent = await performSearch(command, queryResponse, commandContent, message);
                 messages.push({ role: "user", content: searchContent });
