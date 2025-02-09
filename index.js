@@ -7,7 +7,7 @@ const fetch = require('node-fetch');
 
 // Constants
 const AI_MODEL = "o3-mini";
-const MAX_TOKENS = 8192;
+const MAX_TOKENS = 16384;
 const MAX_SEARCH_RESULTS = 3;
 const MAX_MESSAGE_LENGTH = 2000;
 const DATE_OPTIONS = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
@@ -132,7 +132,7 @@ const processContext = async (userId, guildId, messageCount = 10) => {
             { role: "system", content: config.contextSystemMessage },
             { role: "user", content: recentConversations }
         ],
-        max_completion_tokens: 200
+        max_completion_tokens: 8192
     });
     
     const contextSummary = contextResponse.choices[0].message.content;
@@ -322,7 +322,7 @@ client.on('messageCreate', async function(message) {
                         },
                         { role: "user", content: queryContext }
                     ],
-                    max_completion_tokens: 100
+                    max_completion_tokens: 8192
                 });
                 
                 console.log('Query Response:', queryResponse.choices[0].message.content);
@@ -358,8 +358,10 @@ client.on('messageCreate', async function(message) {
                     { role: "developer", content: config.systemMessage(command, message.author.username) },
                     ...messages
                 ],
-                max_completion_tokens: MAX_TOKENS
+                max_completion_tokens: MAX_TOKENS,
+                reasoning_effort: "high",
             });
+
 
             userConversations[message.author.id].push({ role: "user", content: input });
             userConversations[message.author.id].push({ role: "assistant", content: gptResponse.choices[0].message.content });
