@@ -315,7 +315,7 @@ client.on('messageCreate', async function(message) {
                     model: AI_MODEL,
                     messages: [
                         {
-                            role: "system",
+                            role: "developer",
                             content: command === 'search'
                                 ? config.querySystemMessage(message.author.username)
                                 : config.queryDeepSystemMessage(message.author.username)
@@ -355,7 +355,7 @@ client.on('messageCreate', async function(message) {
             const gptResponse = await openai.chat.completions.create({
                 model: AI_MODEL,
                 messages: [
-                    { role: "system", content: config.systemMessage(command, message.author.username) },
+                    { role: "developer", content: config.systemMessage(command, message.author.username) },
                     ...messages
                 ],
                 max_completion_tokens: MAX_TOKENS
