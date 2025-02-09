@@ -142,18 +142,47 @@ const processContext = async (userId, guildId, messageCount = 10) => {
 
 const performSearch = async (command, queryResponse, commandContent, message) => {
     if (command === 'search') {
-        const finalQuery = queryResponse.choices[0].message.content;
+        // Make sure we're getting the query correctly from the response
+        const finalQuery = queryResponse.choices[0].message.content.trim();
+        
+        // Don't proceed with empty queries
+        if (!finalQuery) {
+            throw new Error('Empty search query generated');
+        }
+        
+        console.log('Search query:', finalQuery); // Debug log
+        
         await message.channel.send(`Searching the web for \`${finalQuery}\``);
         const searchResult = await searchQuery(finalQuery);
+        
+        // Verify searchResult has the expected structure
+        if (!searchResult || !searchResult.results) {
+            throw new Error('Invalid search results structure');
+        }
+        
         const results = searchResult.results.slice(0, MAX_SEARCH_RESULTS);
         return formatSearchResults(results, commandContent);
     } else if (command === 'deepsearch') {
         const queries = queryResponse.choices[0].message.content.split(',').map(q => q.trim());
+        
+        // Don't proceed with empty queries
+        if (!queries.length || !queries[0]) {
+            throw new Error('Empty search queries generated');
+        }
+        
         let allResults = [];
         
         for (let query of queries) {
+            console.log('Deep search query:', query); // Debug log
+            
             await message.channel.send(`Searching the web for \`${query}\``);
             const searchResult = await searchQuery(query);
+            
+            // Verify searchResult has the expected structure
+            if (!searchResult || !searchResult.results) {
+                throw new Error('Invalid search results structure');
+            }
+            
             allResults = allResults.concat(searchResult.results.slice(0, MAX_SEARCH_RESULTS));
         }
         
