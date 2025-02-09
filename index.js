@@ -104,28 +104,40 @@ const processImages = async (attachments, userId, input) => {
     return imageDescriptions.join('\n\n');
 };
 
-const processContext = async (userId) => {
-    const conversationHistory = userConversations[userId];
-    const lastConversation = conversationHistory.slice(-2).map(conv => conv.content).join('\n');
-
-    const contextPrompt = userContexts[userId]
-        ? `Last context summary: ${userContexts[userId]}\nLast conversation: ${lastConversation}`
-        : `Last conversation: ${lastConversation}`;
-
-    console.log(`\n\nCP: ${contextPrompt}`);
+const processContext = async (userId, guildId, messageCount = 10) => {
+    const conversationHistory = guildId ? 
+        guildConversations[guildId] : 
+        userConversations[userId];
     
+    if (!conversationHistory || conversationHistory.length < 2) return '';
+
+    // Take last N messages instead of just 2
+    const recentConversations = conversationHistory
+        .slice(-messageCount)
+        .map(conv => {
+            if (typeof conv.content === 'string') {
+                return conv.content;
+            } else if (Array.isArray(conv.content)) {
+                return conv.content.map(item => 
+                    item.type === 'text' ? item.text : '[Image]'
+                ).join(' ');
+            }
+            return JSON.stringify(conv.content);
+        })
+        .join('\n');
+
     const contextResponse = await openai.chat.completions.create({
         model: AI_MODEL,
         messages: [
             { role: "system", content: config.contextSystemMessage },
-            { role: "user", content: contextPrompt }
+            { role: "user", content: recentConversations }
         ],
         max_completion_tokens: 200
     });
     
-    const finalContext = contextResponse.choices[0].message.content;
-    console.log(`\n\nFC: ${finalContext}`);
-    return finalContext;
+    const contextSummary = contextResponse.choices[0].message.content;
+    console.log(`Generated context for ${userId}:`, contextSummary);
+    return contextSummary;
 };
 
 const performSearch = async (command, queryResponse, commandContent, message) => {
@@ -261,11 +273,11 @@ client.on('messageCreate', async function(message) {
 
         if (command === 'search' || command === 'deepsearch') {
             try {
-                if (userConversations[message.author.id].length >= 2) {
-                    userContexts[message.author.id] = await processContext(message.author.id);
-                }
-
-                const queryContext = `${userContexts[message.author.id] ? `Context: ${userContexts[message.author.id]}\n` : ''}${imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''}Question: ${commandContent}`;
+                const context = await processContext(message.author.id, guildId, 10);
+                
+                const queryContext = `${context ? `Context: ${context}\n` : ''}${
+                    imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''
+                }Question: ${commandContent}`;
 
                 const queryResponse = await openai.chat.completions.create({
                     model: AI_MODEL,
@@ -289,7 +301,7 @@ client.on('messageCreate', async function(message) {
                 messages.push({ role: "assistant", content: imageDescriptions });
             }
             if (userConversations[message.author.id].length >= 2) {
-                userContexts[message.author.id] = await processContext(message.author.id);
+                userContexts[message.author.id] = await processContext(message.author.id, guildId, 10);
             }
         }
 
