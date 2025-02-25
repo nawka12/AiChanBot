@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const { searchQuery } = require('./searchlogic.js');
-const { Client, GatewayIntentBits, Partials, ActivityType, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActivityType, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const Anthropic = require('@anthropic-ai/sdk');
 const fetch = require('node-fetch');
 
@@ -246,7 +246,10 @@ const commands = [
                 .setMinValue(MIN_THINKING_BUDGET)),
     new SlashCommandBuilder()
         .setName('reset')
-        .setDescription('Reset the conversation history')
+        .setDescription('Reset the conversation history'),
+    new SlashCommandBuilder()
+        .setName('status')
+        .setDescription('Display current bot configuration and status')
 ];
 
 // Register slash commands
@@ -560,6 +563,29 @@ client.on('interactionCreate', async interaction => {
                     ephemeral: true
                 });
             }
+        } else if (commandName === 'status') {
+            // Create an embed with the bot's status information
+            const statusEmbed = new EmbedBuilder()
+                .setColor(0x00AAFF)
+                .setTitle('Ai-chan Status')
+                .setDescription('Current configuration and status information')
+                .setThumbnail(client.user.displayAvatarURL())
+                .addFields(
+                    { name: 'AI Model', value: AI_MODEL, inline: true },
+                    { name: 'Normal Max Tokens', value: NORMAL_MAX_TOKENS.toString(), inline: true },
+                    { name: 'Extended Max Tokens', value: EXTENDED_THINKING_MAX_TOKENS.toString(), inline: true },
+                    { name: 'Thinking Mode', value: userSettings[user.id].extendedThinking ? 'ON' : 'OFF', inline: true },
+                    { name: 'Show Thinking Process', value: userSettings[user.id].showThinkingProcess ? 'ON' : 'OFF', inline: true },
+                    { name: 'Thinking Budget', value: userSettings[user.id].thinkingBudget.toString(), inline: true },
+                    { name: 'Uptime', value: `Since ${startupTime.toLocaleDateString('en-US', DATE_OPTIONS)} ${startupTime.toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7)`, inline: false }
+                )
+                .setFooter({ text: 'Developer: kayfahaarukku' })
+                .setTimestamp();
+
+            await interaction.reply({
+                embeds: [statusEmbed],
+                ephemeral: true
+            });
         }
     } catch (error) {
         console.error("Slash Command Error:", error);
