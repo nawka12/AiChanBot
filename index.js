@@ -225,17 +225,25 @@ const commands = [
     new SlashCommandBuilder()
         .setName('thinking')
         .setDescription('Toggle thinking mode on or off')
-        .addBooleanOption(option => 
-            option.setName('enabled')
+        .addStringOption(option => 
+            option.setName('mode')
                 .setDescription('Enable or disable thinking mode')
-                .setRequired(true)),
+                .setRequired(true)
+                .addChoices(
+                    { name: 'On', value: 'on' },
+                    { name: 'Off', value: 'off' }
+                )),
     new SlashCommandBuilder()
         .setName('thinking_process')
         .setDescription('Toggle whether to show the thinking process')
-        .addBooleanOption(option => 
-            option.setName('show')
+        .addStringOption(option => 
+            option.setName('mode')
                 .setDescription('Show or hide the thinking process')
-                .setRequired(true)),
+                .setRequired(true)
+                .addChoices(
+                    { name: 'On', value: 'on' },
+                    { name: 'Off', value: 'off' }
+                )),
     new SlashCommandBuilder()
         .setName('thinking_budget')
         .setDescription('Set the thinking budget (tokens)')
@@ -266,11 +274,54 @@ client.on('messageCreate', async function(message) {
 
         message.channel.sendTyping();
 
-        const input = message.content
+        // Process input content and handle message references (replies)
+        let input = message.content
             .replace(`<@${client.user.id}>`, '')
             .replace(/<@&\d+>/g, '')
             .trim()
             .replace(/\n+/g, ' ');
+            
+        // Check if the message is a reply to another message
+        let replyContext = '';
+        if (message.reference && message.reference.messageId) {
+            try {
+                const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
+                const repliedAuthor = repliedMessage.author.bot ? 
+                    (repliedMessage.author.id === client.user.id ? 'You (Ai-chan)' : 'Another bot') : 
+                    repliedMessage.author.username;
+                
+                // Check if the replied message has attachments
+                let attachmentInfo = '';
+                if (repliedMessage.attachments.size > 0) {
+                    const attachmentTypes = Array.from(repliedMessage.attachments.values())
+                        .map(attachment => {
+                            if (attachment.contentType.startsWith('image/')) return 'image';
+                            if (attachment.contentType.startsWith('video/')) return 'video';
+                            if (attachment.contentType.startsWith('audio/')) return 'audio';
+                            return 'file';
+                        });
+                    attachmentInfo = ` [with ${attachmentTypes.join(', ')}]`;
+                }
+                
+                // Handle empty content with attachments case
+                let messageContent = repliedMessage.content.trim();
+                if (!messageContent && attachmentInfo) {
+                    messageContent = "[Media content]";
+                }
+                
+                // Use the full message content without trimming to 150 characters
+                replyContext = `[In reply to ${repliedAuthor}${attachmentInfo}: "${messageContent}"] `;
+                console.log(`Reply context: ${replyContext}`);
+            } catch (error) {
+                console.error("Error fetching replied message:", error);
+            }
+        }
+        
+        // Combine reply context with user input
+        if (replyContext) {
+            input = `${replyContext}${input}`;
+        }
+        
         const [rawCommand, ...contentParts] = input.split(' ');
         const command = rawCommand.toLowerCase();
         const commandContent = contentParts.join(' ');
@@ -356,7 +407,10 @@ client.on('messageCreate', async function(message) {
             try {
                 const context = await processContext(message.author.id, guildId, 10);
                 
+                // Build a more comprehensive query context that includes reply information
                 const queryContext = `${context ? `Context: ${context}\n` : ''}${
+                    replyContext ? `Reply context: ${replyContext}\n` : ''
+                }${
                     imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''
                 }Question: ${commandContent}`;
 
@@ -519,17 +573,17 @@ client.on('interactionCreate', async interaction => {
     
     try {
         if (commandName === 'thinking') {
-            const enabled = options.getBoolean('enabled');
-            userSettings[user.id].extendedThinking = enabled;
+            const mode = options.getString('mode');
+            userSettings[user.id].extendedThinking = mode === 'on';
             await interaction.reply({
-                content: `Thinking mode is now ${enabled ? 'ON' : 'OFF'}.`,
+                content: `Thinking mode is now ${mode === 'on' ? 'ON' : 'OFF'}.`,
                 ephemeral: true
             });
         } else if (commandName === 'thinking_process') {
-            const show = options.getBoolean('show');
-            userSettings[user.id].showThinkingProcess = show;
+            const mode = options.getString('mode');
+            userSettings[user.id].showThinkingProcess = mode === 'on';
             await interaction.reply({
-                content: `Showing thinking process is now ${show ? 'ON' : 'OFF'}.`,
+                content: `Showing thinking process is now ${mode === 'on' ? 'ON' : 'OFF'}.`,
                 ephemeral: true
             });
         } else if (commandName === 'thinking_budget') {
