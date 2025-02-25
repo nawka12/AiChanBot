@@ -280,7 +280,7 @@ client.on('messageCreate', async function(message) {
         if (!userSettings[userId]) {
             userSettings[userId] = {
                 extendedThinking: false,
-                showThinkingProcess: true,
+                showThinkingProcess: false,
                 thinkingBudget: DEFAULT_THINKING_BUDGET
             };
         }
@@ -509,7 +509,7 @@ client.on('interactionCreate', async interaction => {
     if (!userSettings[user.id]) {
         userSettings[user.id] = {
             extendedThinking: false,
-            showThinkingProcess: true,
+            showThinkingProcess: false,
             thinkingBudget: DEFAULT_THINKING_BUDGET
         };
     }
