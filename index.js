@@ -13,7 +13,7 @@ const MAX_SEARCH_RESULTS = 3;
 const MAX_MESSAGE_LENGTH = 2000;
 const MIN_THINKING_BUDGET = 1024;
 const DEFAULT_THINKING_BUDGET = 8192;
-const DATE_OPTIONS = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+const DATE_OPTIONS = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' };
 const TIME_OPTIONS = { 
     hour: '2-digit', 
     minute: '2-digit',
