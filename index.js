@@ -359,7 +359,7 @@ client.on('messageCreate', async function(message) {
 
                 const queryAI = await anthropic.messages.create({
                     model: AI_MODEL,
-                    max_tokens: 100,
+                    max_tokens: 1024,
                     temperature: 0.7,
                     system: command === 'search' ? config.querySystemMessage(message.author.username) : config.queryDeepSystemMessage(message.author.username),
                     messages: [
