@@ -278,9 +278,11 @@ client.on('messageCreate', async function(message) {
         let input = message.content
             .replace(`<@${client.user.id}>`, '')
             .replace(/<@&\d+>/g, '')
-            .trim()
-            .replace(/\n+/g, ' ');
-            
+            .trim();
+
+        // Preserve newlines in the original message but create a version without them for command detection
+        const inputForCommandDetection = input.replace(/\n+/g, ' ');
+        
         // Check if the message is a reply to another message
         let replyContext = '';
         if (message.reference && message.reference.messageId) {
@@ -317,14 +319,16 @@ client.on('messageCreate', async function(message) {
             }
         }
         
-        // Combine reply context with user input
-        if (replyContext) {
-            input = `${replyContext}${input}`;
-        }
-        
-        const [rawCommand, ...contentParts] = input.split(' ');
+        // Extract command BEFORE combining with reply context
+        const [rawCommand, ...contentParts] = inputForCommandDetection.split(' ');
         const command = rawCommand.toLowerCase();
         const commandContent = contentParts.join(' ');
+
+        // Combine reply context with user input AFTER command extraction
+        let fullInput = input;
+        if (replyContext) {
+            fullInput = `${replyContext}${input}`;
+        }
 
         const isDM = message.channel.type === 1;
         const guildId = isDM ? null : message.guild.id;
@@ -341,8 +345,8 @@ client.on('messageCreate', async function(message) {
 
         // Modify the input to include username for guild messages
         const processedInput = isDM ? 
-            input : 
-            `[${message.author.username}]: ${input}`;
+            fullInput : 
+            `[${message.author.username}]: ${fullInput}`;
 
         // Initialize conversations if they don't exist
         if (isDM) {
@@ -370,7 +374,7 @@ client.on('messageCreate', async function(message) {
         let imageDescriptions = '';
         if (message.attachments.size > 0) {
             try {
-                imageDescriptions = await processImages(message.attachments, message.author.id, guildId, input);
+                imageDescriptions = await processImages(message.attachments, message.author.id, guildId, fullInput);
                 console.log(`Images processed. Descriptions: ${imageDescriptions}`);
                 
                 // If it's offline mode, send the image descriptions as the response
@@ -535,7 +539,7 @@ client.on('messageCreate', async function(message) {
 
             // Update the appropriate conversation history
             if (isDM) {
-                userConversations[message.author.id].push({ role: "user", content: input });
+                userConversations[message.author.id].push({ role: "user", content: fullInput });
                 userConversations[message.author.id].push({ 
                     role: "assistant", 
                     content: finalResponse 
