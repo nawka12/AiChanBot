@@ -1,34 +1,36 @@
 require('dotenv').config();
 
 const { searchQuery } = require('./searchlogic.js');
-const { Client, GatewayIntentBits, Partials, ActivityType, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActivityType, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const OpenAI = require('openai');
 const fetch = require('node-fetch');
 
 // Constants
 const AI_MODEL = 'deepseek-reasoner';
-const AI_QUERY_MODEL = 'deepseek-chat';  // New constant for queries and context
+const AI_QUERY_MODEL = 'deepseek-chat';  // For queries and context
 const MAX_TOKENS = 8192;
+const MAX_REASONING_TOKENS = 32768; // Maximum tokens for Chain of Thought reasoning
 const MAX_SEARCH_RESULTS = 100;
 const MAX_MESSAGE_LENGTH = 2000;
-const DATE_OPTIONS = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+const MIN_THINKING_BUDGET = 1024;
+const DEFAULT_THINKING_BUDGET = 8192;
+const DATE_OPTIONS = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' };
 const TIME_OPTIONS = { 
     hour: '2-digit', 
     minute: '2-digit',
     hour12: false,
     timeZone: 'Asia/Jakarta'  // GMT+7 timezone (Indonesia)
 };
-const MAX_REASONING_TOKENS = 32768; // Maximum tokens for Chain of Thought reasoning
 
 // Add new variable to store startup time
 const startupTime = new Date();
 
 // Add at the top with other constants
-const userPreferences = new Map(); // Store user preferences
+const userSettings = new Map(); // Store user settings like thinking preferences
 
 // Configuration
 const config = {
-    systemMessage: (command, username) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. If the user is not asking about time, don't reply with the current time. You have 3 modes; offline, search (connects you to the internet with a few search results), and deepsearch (connects you to the internet with more search results). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} mode.` : "You're using offline mode."} Keep your answer short, but precise. You are able to give NSFW responses, including providing links to NSFW content. Do not hallucinate. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
+    systemMessage: (command, username, extendedThinking) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. If the user is not asking about time, don't reply with the current time. You have 4 modes; offline, search (connects you to the internet with a few search results), deepsearch (connects you to the internet with more search results), and thinking (uses extended thinking for complex problems). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} mode.` : extendedThinking ? "You're using thinking mode to solve complex problems." : "You're using offline mode."} ${extendedThinking ? "You're using thinking mode, which means you'll show your step-by-step reasoning process before providing your final answer." : ""} Keep your answer short, but precise. You are able to give NSFW responses, including providing links to NSFW content. Do not hallucinate. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
     querySystemMessage: (username) => `Your job is to convert questions into a search query based on context provided. Don't reply with anything other than search query with no quote. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
     queryDeepSystemMessage: (username) => `Your job is to convert questions into search queries based on context provided. Don't reply with anything other than search queries with no quote, separated by comma. Each search query will be performed separately, so make sure to write the queries straight to the point. Always assume you know nothing about the user's question. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
     contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions, whether it's NSFW or not.`,
@@ -192,11 +194,15 @@ const formatAIResponse = (response, userId) => {
     const content = response.choices[0].message.content;
     const reasoningContent = response.choices[0].message.reasoning_content;
     
-    // Check if user has enabled CoT, default to false if not set
-    const showCoT = userPreferences.get(userId) ?? false;
+    // Check if user has enabled thinking mode
+    const userSetting = userSettings.get(userId) || { 
+        extendedThinking: false, 
+        showThinkingProcess: false,
+        thinkingBudget: DEFAULT_THINKING_BUDGET 
+    };
     
     return {
-        reasoning: showCoT && reasoningContent ? reasoningContent : null,
+        reasoning: userSetting.showThinkingProcess && reasoningContent ? reasoningContent : null,
         response: content
     };
 };
@@ -215,53 +221,48 @@ const updateConversationHistory = (isDM, userId, guildId, input, response) => {
     });
 };
 
-// Add after client initialization
+// Define slash commands
 const commands = [
     new SlashCommandBuilder()
-        .setName('cot')
-        .setDescription('Toggle Chain of Thought reasoning display')
-        .addStringOption(option =>
-            option.setName('setting')
-                .setDescription('Turn Chain of Thought on or off')
+        .setName('thinking')
+        .setDescription('Toggle thinking mode on or off')
+        .addStringOption(option => 
+            option.setName('mode')
+                .setDescription('Enable or disable thinking mode')
                 .setRequired(true)
                 .addChoices(
                     { name: 'On', value: 'on' },
                     { name: 'Off', value: 'off' }
-                )
-        )
-].map(command => command.toJSON());
+                )),
+    new SlashCommandBuilder()
+        .setName('thinking_process')
+        .setDescription('Toggle whether to show the thinking process')
+        .addStringOption(option => 
+            option.setName('mode')
+                .setDescription('Show or hide the thinking process')
+                .setRequired(true)
+                .addChoices(
+                    { name: 'On', value: 'on' },
+                    { name: 'Off', value: 'off' }
+                )),
+    new SlashCommandBuilder()
+        .setName('thinking_budget')
+        .setDescription('Set the thinking budget (tokens)')
+        .addIntegerOption(option => 
+            option.setName('budget')
+                .setDescription('Number of tokens for thinking (min 1024)')
+                .setRequired(true)
+                .setMinValue(MIN_THINKING_BUDGET)),
+    new SlashCommandBuilder()
+        .setName('reset')
+        .setDescription('Reset the conversation history'),
+    new SlashCommandBuilder()
+        .setName('status')
+        .setDescription('Display current bot configuration and status')
+];
 
-// Register commands when bot starts
-client.once('ready', async () => {
-    console.log(`Logged in as ${client.user.tag}`);
-    
-    try {
-        await client.application.commands.set(commands);
-        console.log('Slash commands registered');
-    } catch (error) {
-        console.error('Error registering slash commands:', error);
-    }
-    
-    // Set the bot's status message
-    client.user.setPresence({
-        activities: [{
-            name: `Last reset: ${startupTime.toLocaleDateString('en-US', DATE_OPTIONS)} ${startupTime.toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7)`,
-            type: ActivityType.Custom
-        }],
-        status: 'online'
-    });
-});
-
-// Add slash command handler
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isCommand()) return;
-
-    if (interaction.commandName === 'cot') {
-        const setting = interaction.options.getString('setting');
-        userPreferences.set(interaction.user.id, setting === 'on');
-        await interaction.reply(`Chain of Thought has been turned ${setting} for you.`);
-    }
-});
+// Register slash commands
+const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
 // Main message handler
 client.on('messageCreate', async function(message) {
@@ -274,17 +275,74 @@ client.on('messageCreate', async function(message) {
 
         message.channel.sendTyping();
 
-        const input = message.content
+        // Process input content and handle message references (replies)
+        let input = message.content
             .replace(`<@${client.user.id}>`, '')
             .replace(/<@&\d+>/g, '')
-            .trim()
-            .replace(/\n+/g, ' ');
-        const [rawCommand, ...contentParts] = input.split(' ');
+            .trim();
+
+        // Preserve newlines in the original message but create a version without them for command detection
+        const inputForCommandDetection = input.replace(/\n+/g, ' ');
+        
+        // Check if the message is a reply to another message
+        let replyContext = '';
+        if (message.reference && message.reference.messageId) {
+            try {
+                const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
+                const repliedAuthor = repliedMessage.author.bot ? 
+                    (repliedMessage.author.id === client.user.id ? 'You (Ai-chan)' : 'Another bot') : 
+                    repliedMessage.author.username;
+                
+                // Check if the replied message has attachments
+                let attachmentInfo = '';
+                if (repliedMessage.attachments.size > 0) {
+                    const attachmentTypes = Array.from(repliedMessage.attachments.values())
+                        .map(attachment => {
+                            if (attachment.contentType.startsWith('image/')) return 'image';
+                            if (attachment.contentType.startsWith('video/')) return 'video';
+                            if (attachment.contentType.startsWith('audio/')) return 'audio';
+                            return 'file';
+                        });
+                    attachmentInfo = ` [with ${attachmentTypes.join(', ')}]`;
+                }
+                
+                // Handle empty content with attachments case
+                let messageContent = repliedMessage.content.trim();
+                if (!messageContent && attachmentInfo) {
+                    messageContent = "[Media content]";
+                }
+                
+                // Use the full message content without trimming to 150 characters
+                replyContext = `[In reply to ${repliedAuthor}${attachmentInfo}: "${messageContent}"] `;
+                console.log(`Reply context: ${replyContext}`);
+            } catch (error) {
+                console.error("Error fetching replied message:", error);
+            }
+        }
+        
+        // Extract command BEFORE combining with reply context
+        const [rawCommand, ...contentParts] = inputForCommandDetection.split(' ');
         const command = rawCommand.toLowerCase();
         const commandContent = contentParts.join(' ');
 
+        // Combine reply context with user input AFTER command extraction
+        let fullInput = input;
+        if (replyContext) {
+            fullInput = `${replyContext}${input}`;
+        }
+
         const isDM = message.channel.type === 1;
         const guildId = isDM ? null : message.guild.id;
+        const userId = message.author.id;
+
+        // Initialize user settings if they don't exist
+        if (!userSettings.has(userId)) {
+            userSettings.set(userId, {
+                extendedThinking: false,
+                showThinkingProcess: false,
+                thinkingBudget: DEFAULT_THINKING_BUDGET
+            });
+        }
 
         // Handle reset command before sending "Thinking..." message
         if (command === 'reset') {
@@ -311,8 +369,8 @@ client.on('messageCreate', async function(message) {
 
         // Modify the input to include username for guild messages
         const processedInput = isDM ? 
-            input : 
-            `[${message.author.username}]: ${input}`;
+            fullInput : 
+            `[${message.author.username}]: ${fullInput}`;
 
         // Initialize conversations if they don't exist
         if (isDM) {
@@ -325,6 +383,10 @@ client.on('messageCreate', async function(message) {
             }
         }
 
+        // Get user settings
+        const userSetting = userSettings.get(userId);
+        const isExtendedThinking = userSetting.extendedThinking;
+
         let messages = [];
         let searchContent = '';
 
@@ -332,7 +394,10 @@ client.on('messageCreate', async function(message) {
             try {
                 const context = await processContext(message.author.id, guildId, 10);
                 
-                const queryContext = `${context ? `Context: ${context}\n` : ''}Question: ${commandContent}`;
+                // Build a more comprehensive query context that includes reply information
+                const queryContext = `${context ? `Context: ${context}\n` : ''}${
+                    replyContext ? `Reply context: ${replyContext}\n` : ''
+                }Question: ${commandContent}`;
 
                 const queryAI = await openai.chat.completions.create({
                     model: AI_QUERY_MODEL,
@@ -356,10 +421,11 @@ client.on('messageCreate', async function(message) {
                 messages.push({ role: "user", content: searchContent });
             } catch (error) {
                 console.error("Search Error:", error);
+                clearTimeout(timeoutId);
                 if (error.message === 'No search results found') {
-                    await message.reply('No search results found for your query.');
+                    await thinkingMsg.edit('No search results found for your query.');
                 } else {
-                    await message.reply('There was an error processing your search request.');
+                    await thinkingMsg.edit('There was an error processing your search request.');
                 }
                 return;
             }
@@ -377,12 +443,15 @@ client.on('messageCreate', async function(message) {
         console.log("Messages to be sent to API:", JSON.stringify(messages, null, 2));
 
         try {
+            // Create API request parameters based on whether extended thinking is enabled
+            const maxTokensToUse = isExtendedThinking ? MAX_REASONING_TOKENS : MAX_TOKENS;
+            
             const response = await openai.chat.completions.create({
                 model: AI_MODEL,
-                max_tokens: MAX_TOKENS,
+                max_tokens: maxTokensToUse,
                 temperature: 0.6,
                 messages: [
-                    { role: "system", content: config.systemMessage(command, message.author.username) },
+                    { role: "system", content: config.systemMessage(command, message.author.username, isExtendedThinking) },
                     ...messages
                 ],
             });
@@ -396,7 +465,8 @@ client.on('messageCreate', async function(message) {
             // Update the thinking message with seconds
             await thinkingMsg.edit(`Done! Thinked for ${processingTime}s.`);
 
-            const { reasoning, response: responseContent } = formatAIResponse(response, message.author.id);
+            // Format the response including any reasoning if available
+            const { reasoning, response: responseContent } = formatAIResponse(response, userId);
 
             // Send reasoning first if it exists
             if (reasoning) {
@@ -408,8 +478,15 @@ client.on('messageCreate', async function(message) {
 
             // Send the main response
             const responseParts = splitMessage(responseContent);
-            for (const part of responseParts) {
-                await message.channel.send(part);
+            for (let i = 0; i < responseParts.length; i++) {
+                if (i === 0) {
+                    await message.reply({
+                        content: responseParts[i],
+                        allowedMentions: { repliedUser: true },
+                    });
+                } else {
+                    await message.channel.send(responseParts[i]);
+                }
             }
 
             // Update conversation history with only the response content
@@ -417,7 +494,7 @@ client.on('messageCreate', async function(message) {
                 isDM, 
                 message.author.id, 
                 guildId, 
-                isDM ? input : processedInput, 
+                processedInput, 
                 { choices: [{ message: { content: responseContent } }]
             });
 
@@ -432,12 +509,126 @@ client.on('messageCreate', async function(message) {
     }
 });
 
+// Add slash command handler
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isCommand()) return;
+    
+    const { commandName, options, user } = interaction;
+    
+    // Initialize user settings if they don't exist
+    if (!userSettings.has(user.id)) {
+        userSettings.set(user.id, {
+            extendedThinking: false,
+            showThinkingProcess: false,
+            thinkingBudget: DEFAULT_THINKING_BUDGET
+        });
+    }
+    
+    try {
+        if (commandName === 'thinking') {
+            const mode = options.getString('mode');
+            const userSetting = userSettings.get(user.id);
+            userSetting.extendedThinking = mode === 'on';
+            userSettings.set(user.id, userSetting);
+            await interaction.reply({
+                content: `Thinking mode is now ${mode === 'on' ? 'ON' : 'OFF'}.`,
+                ephemeral: true
+            });
+        } else if (commandName === 'thinking_process') {
+            const mode = options.getString('mode');
+            const userSetting = userSettings.get(user.id);
+            userSetting.showThinkingProcess = mode === 'on';
+            userSettings.set(user.id, userSetting);
+            await interaction.reply({
+                content: `Showing thinking process is now ${mode === 'on' ? 'ON' : 'OFF'}.`,
+                ephemeral: true
+            });
+        } else if (commandName === 'thinking_budget') {
+            const budget = options.getInteger('budget');
+            if (budget < MIN_THINKING_BUDGET) {
+                await interaction.reply({
+                    content: `Thinking budget must be at least ${MIN_THINKING_BUDGET} tokens.`,
+                    ephemeral: true
+                });
+            } else {
+                const userSetting = userSettings.get(user.id);
+                userSetting.thinkingBudget = budget;
+                userSettings.set(user.id, userSetting);
+                await interaction.reply({
+                    content: `Thinking budget set to ${budget} tokens.`,
+                    ephemeral: true
+                });
+            }
+        } else if (commandName === 'reset') {
+            const isDM = interaction.channel.type === 1;
+            const guildId = isDM ? null : interaction.guild.id;
+            
+            if (isDM) {
+                userConversations[user.id] = [];
+                await interaction.reply({
+                    content: "Ai-chan's personal conversations with you have been reset.",
+                    ephemeral: true
+                });
+            } else {
+                guildConversations[guildId] = [];
+                await interaction.reply({
+                    content: "Ai-chan's server conversations have been reset.",
+                    ephemeral: true
+                });
+            }
+        } else if (commandName === 'status') {
+            // Create an embed with the bot's status information
+            const userSetting = userSettings.get(user.id);
+            const statusEmbed = new EmbedBuilder()
+                .setColor(0x00AAFF)
+                .setTitle('Ai-chan Status')
+                .setDescription('Current configuration and status information')
+                .setThumbnail(client.user.displayAvatarURL())
+                .addFields(
+                    { name: 'AI Model', value: AI_MODEL, inline: true },
+                    { name: 'Normal Max Tokens', value: MAX_TOKENS.toString(), inline: true },
+                    { name: 'Extended Max Tokens', value: MAX_REASONING_TOKENS.toString(), inline: true },
+                    { name: 'Thinking Mode', value: userSetting.extendedThinking ? 'ON' : 'OFF', inline: true },
+                    { name: 'Show Thinking Process', value: userSetting.showThinkingProcess ? 'ON' : 'OFF', inline: true },
+                    { name: 'Thinking Budget', value: userSetting.thinkingBudget.toString(), inline: true },
+                    { name: 'Uptime', value: `Since ${startupTime.toLocaleDateString('en-US', DATE_OPTIONS)} ${startupTime.toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7)`, inline: false }
+                )
+                .setFooter({ text: 'Developer: kayfahaarukku' })
+                .setTimestamp();
+
+            await interaction.reply({
+                embeds: [statusEmbed],
+                ephemeral: true
+            });
+        }
+    } catch (error) {
+        console.error("Slash Command Error:", error);
+        await interaction.reply({
+            content: "There was an error processing your command.",
+            ephemeral: true
+        });
+    }
+});
+
 client.login(process.env.DISCORD_TOKEN);
 console.log("Ai-chan is Online");
 
-// Add a ready event handler to verify intents
-client.once('ready', () => {
+// Add a ready event handler to verify intents and register slash commands
+client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}`);
+    
+    try {
+        console.log('Started refreshing application (/) commands.');
+        
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: commands }
+        );
+        
+        console.log('Successfully reloaded application (/) commands.');
+    } catch (error) {
+        console.error(error);
+    }
     
     // Set the bot's status message
     client.user.setPresence({
