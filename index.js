@@ -483,7 +483,8 @@ client.on('messageCreate', async function(message) {
             if (isExtendedThinking && thinkingMessage) {
                 const endTime = Date.now();
                 const thinkingTime = endTime - startTime;
-                await thinkingMessage.edit(`Done! Thinked for ${thinkingTime}ms.`);
+                const thinkingTimeInSeconds = (thinkingTime / 1000).toFixed(2);
+                await thinkingMessage.edit(`Done! Thinked for ${thinkingTimeInSeconds}s.`);
             }
 
             // Process the response based on whether it contains thinking content
