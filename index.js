@@ -468,8 +468,23 @@ client.on('messageCreate', async function(message) {
                 };
             }
             
+            // Send a "Thinking..." message if extended thinking is enabled
+            let thinkingMessage = null;
+            const startTime = Date.now();
+            
+            if (isExtendedThinking) {
+                thinkingMessage = await message.reply("Thinking...");
+            }
+            
             // Make the API request
             const response = await anthropic.messages.create(apiParams);
+            
+            // Calculate thinking time if extended thinking was enabled
+            if (isExtendedThinking && thinkingMessage) {
+                const endTime = Date.now();
+                const thinkingTime = endTime - startTime;
+                await thinkingMessage.edit(`Done! Thinked for ${thinkingTime}ms.`);
+            }
 
             // Process the response based on whether it contains thinking content
             let finalResponse = '';
@@ -492,10 +507,15 @@ client.on('messageCreate', async function(message) {
                     const responseParts = splitMessage(`**My answer:**\n\n${finalResponse}`);
                     for (let i = 0; i < responseParts.length; i++) {
                         if (i === 0) {
-                            await message.reply({
-                                content: responseParts[i],
-                                allowedMentions: { repliedUser: true },
-                            });
+                            if (thinkingMessage) {
+                                // If we already sent a thinking message, send a new message instead of replying again
+                                await message.channel.send(responseParts[i]);
+                            } else {
+                                await message.reply({
+                                    content: responseParts[i],
+                                    allowedMentions: { repliedUser: true },
+                                });
+                            }
                         } else {
                             await message.channel.send(responseParts[i]);
                         }
@@ -503,14 +523,22 @@ client.on('messageCreate', async function(message) {
                 } else {
                     // If extended thinking is not enabled or show thinking process is disabled, just send the final response
                     const messageParts = splitMessage(finalResponse);
+                    
                     for (let i = 0; i < messageParts.length; i++) {
-                        if (i === 0) {
-                            await message.reply({
-                                content: messageParts[i],
-                                allowedMentions: { repliedUser: true },
-                            });
-                        } else {
+                        if (message.channel.type === 1) {
+                            // For DMs
                             await message.channel.send(messageParts[i]);
+                        } else {
+                            // For guild messages
+                            if (i === 0 && !thinkingMessage) {
+                                // Only reply to the original message if we didn't send a thinking message
+                                await message.reply({
+                                    content: messageParts[i],
+                                    allowedMentions: { repliedUser: true },
+                                });
+                            } else {
+                                await message.channel.send(messageParts[i]);
+                            }
                         }
                     }
                 }
@@ -525,7 +553,8 @@ client.on('messageCreate', async function(message) {
                         await message.channel.send(messageParts[i]);
                     } else {
                         // For guild messages
-                        if (i === 0) {
+                        if (i === 0 && !thinkingMessage) {
+                            // Only reply to the original message if we didn't send a thinking message
                             await message.reply({
                                 content: messageParts[i],
                                 allowedMentions: { repliedUser: true },
