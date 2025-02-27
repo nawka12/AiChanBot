@@ -27,33 +27,27 @@ async function scrapeReddit(url) {
         console.log(`Scraping Reddit URL: ${url}`);
         
         // Convert Reddit URL to JSON API URL
-        // Remove trailing slash if present
-        const cleanUrl = url.endsWith('/') ? url.slice(0, -1) : url;
-        // Add .json extension
-        const jsonUrl = cleanUrl.endsWith('.json') ? cleanUrl : `${cleanUrl}.json`;
-        
-        // Use the old.reddit.com domain which is more scraper friendly
-        const oldRedditUrl = jsonUrl.replace('www.reddit.com', 'old.reddit.com');
-        
-        console.log(`Fetching Reddit JSON from: ${oldRedditUrl}`);
+        // Example: https://www.reddit.com/r/Hololive/comments/1c1ezb4/... -> https://www.reddit.com/r/Hololive/comments/1c1ezb4/....json
+        const jsonUrl = url.endsWith('.json') ? url : `${url}.json`;
         
         // Make the request with appropriate headers
-        const response = await axios.get(oldRedditUrl, {
+        const response = await axios.get(jsonUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+                'User-Agent': getRandomUserAgent(),
                 'Accept': 'application/json',
                 'Accept-Language': 'en-US,en;q=0.5',
-                'Referer': 'https://old.reddit.com/',
-                'Origin': 'https://old.reddit.com',
+                'Referer': 'https://www.reddit.com/',
+                'Origin': 'https://www.reddit.com',
                 'DNT': '1',
                 'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
                 'Cache-Control': 'max-age=0'
             },
-            timeout: 15000,
-            // Add this to fix SSL issues
-            httpsAgent: new (require('https').Agent)({
-                rejectUnauthorized: false
-            })
+            timeout: 15000
         });
         
         // Reddit API returns an array with post data and comments
@@ -115,96 +109,11 @@ async function scrapeReddit(url) {
         };
     } catch (error) {
         console.error(`Error scraping Reddit ${url}:`, error.message);
-        
-        // Try alternative method using an unofficial Reddit API proxy
-        try {
-            console.log("Trying alternative method to get Reddit content...");
-            const postId = extractRedditPostId(url);
-            if (!postId) throw new Error("Could not extract post ID");
-            
-            // Use another URL format that sometimes works better
-            const apiUrl = `https://api.reddit.com/comments/${postId}`;
-            
-            console.log(`Fetching from alternate URL: ${apiUrl}`);
-            
-            const response = await axios.get(apiUrl, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36'
-                },
-                timeout: 15000
-            });
-            
-            const data = response.data;
-            let title = '';
-            let content = '';
-            
-            if (Array.isArray(data) && data.length > 0 && data[0].data && data[0].data.children && data[0].data.children.length > 0) {
-                const post = data[0].data.children[0].data;
-                title = post.title || '';
-                const postAuthor = post.author || 'Unknown';
-                
-                content = post.selftext || '';
-                
-                if (content) {
-                    content = `[Post by u/${postAuthor}] ${content}\n\n`;
-                } else if (post.url && !post.url.includes('reddit.com')) {
-                    content = `[Link post by u/${postAuthor}] URL: ${post.url}\n\n`;
-                }
-                
-                if (post.link_flair_text) {
-                    content = `[Flair: ${post.link_flair_text}] ${content}`;
-                }
-                
-                // Extract comments
-                if (data.length > 1 && data[1].data && data[1].data.children) {
-                    content += "===COMMENTS===\n\n";
-                    
-                    const comments = data[1].data.children;
-                    
-                    comments.forEach((commentObj, index) => {
-                        if (commentObj.kind !== 't1' || !commentObj.data) return;
-                        
-                        const comment = commentObj.data;
-                        if (comment.body && !comment.stickied) {
-                            content += `[Comment by u/${comment.author}] ${comment.body}\n\n`;
-                            
-                            if (index >= 9) return;
-                        }
-                    });
-                }
-                
-                return {
-                    url,
-                    content: content || 'No content extracted from Reddit',
-                    title: title || 'Reddit Post'
-                };
-            }
-        } catch (alternativeError) {
-            console.error("Alternative method also failed:", alternativeError.message);
-        }
-        
-        // If both methods fail, return error message
         return {
             url,
             content: `Failed to scrape Reddit content: ${error.message}`,
             title: 'Reddit Scraping Error'
         };
-    }
-}
-
-/**
- * Extract Reddit post ID from URL
- * @param {string} url - Reddit URL
- * @returns {string|null} - Post ID or null if not found
- */
-function extractRedditPostId(url) {
-    try {
-        const regex = /\/comments\/([a-z0-9]+)\//i;
-        const match = url.match(regex);
-        return match ? match[1] : null;
-    } catch (error) {
-        console.error("Error extracting Reddit post ID:", error);
-        return null;
     }
 }
 
@@ -502,4 +411,4 @@ async function scrapeMultipleUrls(urls) {
 module.exports = {
     scrapeUrl,
     scrapeMultipleUrls
-}; 
+};
