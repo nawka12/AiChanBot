@@ -209,9 +209,9 @@ const performSearch = async (command, queryAI, commandContent, message) => {
         // Limit to unique URLs and maximum 3 URLs
         scrapedUrls = [...new Set(scrapedUrls)].slice(0, 3);
         
-        // Scrape each URL, passing the original user query for fallback content generation
+        // Scrape each URL
         await message.channel.send(`Scraping content from ${scrapedUrls.length} website(s)...`);
-        const scrapedResults = await scrapeMultipleUrls(scrapedUrls, commandContent);
+        const scrapedResults = await scrapeMultipleUrls(scrapedUrls);
         
         // Format scraped content for Claude
         return formatScrapedResults(scrapedResults, commandContent);
