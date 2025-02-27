@@ -337,7 +337,7 @@ async function scrapeUrl(url) {
         }
         
         // Limit content length to avoid overwhelming the AI
-        const maxContentLength = 10000;
+        const maxContentLength = 10000000;
         if (cleanedContent.length > maxContentLength) {
             cleanedContent = cleanedContent.substring(0, maxContentLength) + '... [content truncated]';
         }
