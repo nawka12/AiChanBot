@@ -202,6 +202,9 @@ const performSearch = async (command, queryAI, commandContent, message) => {
                 if (!seenUrls.has(result.url)) {
                     uniqueResults.push(result);
                     seenUrls.add(result.url);
+                } else {
+                    // Log when a result is skipped due to duplication
+                    console.log(`Skipped duplicate result: ${result.url} from query "${query}"`);
                 }
                 
                 resultsIndex++;
