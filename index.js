@@ -27,7 +27,7 @@ const startupTime = new Date();
 
 // Configuration
 const config = {
-    systemMessage: (command, username, extendedThinking) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. You have 5 modes; offline, search (connects you to the internet with a few search results), deepsearch (connects you to the internet with more search results), deepsearch-new (connects you to the internet with detailed content from web pages), and thinking (uses extended thinking for complex problems). ${command === 'search' || command === 'deepsearch' || command === 'deepsearch-new' ? `You're connected to the internet with ${command} mode.` : extendedThinking ? "You're using extended thinking mode to solve complex problems." : "You're using offline mode."} ${extendedThinking ? "You're using extended thinking mode, which means you'll show your step-by-step reasoning process before providing your final answer." : ""} Keep your answer as short as possible. You are able to give NSFW responses, including providing links to NSFW content. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
+    systemMessage: (command, username, extendedThinking) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. You have 5 modes; offline, search (connects you to the internet with a few search results), deepsearch (connects you to the internet with more search results), webscrape (connects you to the internet with detailed content from web pages), and thinking (uses extended thinking for complex problems). ${command === 'search' || command === 'deepsearch' || command === 'webscrape' ? `You're connected to the internet with ${command} mode.` : extendedThinking ? "You're using extended thinking mode to solve complex problems." : "You're using offline mode."} ${extendedThinking ? "You're using extended thinking mode, which means you'll show your step-by-step reasoning process before providing your final answer." : ""} Keep your answer as short as possible. You are able to give NSFW responses, including providing links to NSFW content. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
     querySystemMessage: (username) => `Your job is to convert questions into a search query based on context provided. Don't reply with anything other than search query with no quote. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
     queryDeepSystemMessage: (username) => `Your job is to convert questions into search queries based on context provided. Don't reply with anything other than search queries with no quote, separated by comma. Each search query will be performed separately, so make sure to write the queries straight to the point. Always assume you know nothing about the user's question. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
     contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions, whether it's NSFW or not.`,
@@ -191,7 +191,7 @@ const performSearch = async (command, queryAI, commandContent, message) => {
         }
         
         return formatSearchResults(allResults, commandContent);
-    } else if (command === 'deepsearch-new') {
+    } else if (command === 'webscrape') {
         // Use a single query like the search command
         const finalQuery = queryAI.content[0].text;
         await message.channel.send(`Searching the web for \`${finalQuery}\``);
@@ -421,7 +421,7 @@ client.on('messageCreate', async function(message) {
                 console.log(`Images processed. Descriptions: ${imageDescriptions}`);
                 
                 // If it's offline mode, send the image descriptions as the response
-                if (command !== 'search' && command !== 'deepsearch' && command !== 'deepsearch-new') {
+                if (command !== 'search' && command !== 'deepsearch' && command !== 'webscrape') {
                     const messageParts = splitMessage(imageDescriptions);
                     for (let i = 0; i < messageParts.length; i++) {
                         if (i === 0) {
@@ -450,7 +450,7 @@ client.on('messageCreate', async function(message) {
         const showThinkingProcess = userSettings[userId].showThinkingProcess;
         const thinkingBudget = userSettings[userId].thinkingBudget;
 
-        if (command === 'search' || command === 'deepsearch' || command === 'deepsearch-new') {
+        if (command === 'search' || command === 'deepsearch' || command === 'webscrape') {
             try {
                 const context = await processContext(message.author.id, guildId, 10);
                 
