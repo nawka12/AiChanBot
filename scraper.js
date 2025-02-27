@@ -377,16 +377,31 @@ async function scrapeUrl(url) {
  * @returns {Promise<Array>} - Promise resolving to array of scraped content
  */
 async function scrapeMultipleUrls(urls) {
-    // Limit to max 3 URLs to avoid overwhelming the system
-    const urlsToScrape = urls.slice(0, 3);
+    const MAX_SUCCESSFUL_SCRAPES = 3;
     const results = [];
+    let successfulScrapes = 0;
     
     try {
-        // Process URLs sequentially with delays to avoid triggering anti-scraping measures
-        for (const url of urlsToScrape) {
+        // Try to scrape URLs until we have enough successful ones or run out of URLs
+        for (const url of urls) {
+            // If we already have enough successful scrapes, break
+            if (successfulScrapes >= MAX_SUCCESSFUL_SCRAPES) {
+                break;
+            }
+            
             try {
+                console.log(`Attempting to scrape URL ${successfulScrapes+1}/${MAX_SUCCESSFUL_SCRAPES}: ${url}`);
                 const result = await scrapeUrl(url);
                 results.push(result);
+                
+                // Check if scrape was successful (no error in title and has content)
+                if (!result.title.includes('Error') && result.content.length > 100 && 
+                    !result.content.startsWith('Failed to scrape content')) {
+                    successfulScrapes++;
+                    console.log(`Successfully scraped ${url}`);
+                } else {
+                    console.log(`Failed to get useful content from ${url}, will try another URL`);
+                }
                 
                 // Add a random delay between requests (1-3 seconds)
                 const randomDelay = 1000 + Math.floor(Math.random() * 2000);
@@ -401,6 +416,7 @@ async function scrapeMultipleUrls(urls) {
             }
         }
         
+        console.log(`Completed scraping with ${successfulScrapes}/${results.length} successful URLs`);
         return results;
     } catch (error) {
         console.error('Error in batch scraping:', error);

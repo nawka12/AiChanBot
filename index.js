@@ -192,26 +192,20 @@ const performSearch = async (command, queryAI, commandContent, message) => {
         
         return formatSearchResults(allResults, commandContent);
     } else if (command === 'deepsearch-new') {
-        const queries = queryAI.content[0].text.split(',').map(q => q.trim());
-        let allResults = [];
-        let scrapedUrls = [];
+        // Use a single query like the search command
+        const finalQuery = queryAI.content[0].text;
+        await message.channel.send(`Searching the web for \`${finalQuery}\``);
+        const searchResult = await searchQuery(finalQuery);
         
-        for (let query of queries) {
-            await message.channel.send(`Searching the web for \`${query}\``);
-            const searchResult = await searchQuery(query);
-            allResults = allResults.concat(searchResult.results.slice(0, MAX_SEARCH_RESULTS));
-            
-            // Extract URLs from search results for scraping
-            const urls = searchResult.results.slice(0, MAX_SEARCH_RESULTS).map(result => result.url);
-            scrapedUrls = scrapedUrls.concat(urls);
-        }
+        // Get more results from search to have backups in case scraping fails
+        const results = searchResult.results.slice(0, MAX_SEARCH_RESULTS * 3); // Get 9 results instead of 3
         
-        // Limit to unique URLs and maximum 3 URLs
-        scrapedUrls = [...new Set(scrapedUrls)].slice(0, 3);
+        // Extract URLs from search results for scraping
+        const urls = results.map(result => result.url);
         
-        // Scrape each URL
-        await message.channel.send(`Scraping content from ${scrapedUrls.length} website(s)...`);
-        const scrapedResults = await scrapeMultipleUrls(scrapedUrls);
+        // Scrape content from URLs
+        await message.channel.send(`Scraping content from up to 3 websites (will try additional sites if some fail)...`);
+        const scrapedResults = await scrapeMultipleUrls(urls);
         
         // Format scraped content for Claude
         return formatScrapedResults(scrapedResults, commandContent);
@@ -484,12 +478,16 @@ client.on('messageCreate', async function(message) {
                     imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''
                 }Question: ${commandContent}`;
 
-                // Use the same query system message for all search commands
+                // Use appropriate system message based on the command
+                const querySystemMessage = command === 'deepsearch' ? 
+                    config.queryDeepSystemMessage(message.author.username) : 
+                    config.querySystemMessage(message.author.username);
+                
                 const queryAI = await anthropic.messages.create({
                     model: AI_MODEL,
                     max_tokens: 1024,
                     temperature: 0.7,
-                    system: command === 'search' ? config.querySystemMessage(message.author.username) : config.queryDeepSystemMessage(message.author.username),
+                    system: querySystemMessage,
                     messages: [
                         {"role": "user", "content": queryContext}
                     ],
