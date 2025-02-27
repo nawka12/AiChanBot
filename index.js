@@ -224,35 +224,18 @@ const formatScrapedResults = (scrapedResults, commandContent) => {
     
     let formattedContent = `Here's detailed content from ${successfulScrapes}/${scrapedResults.length} web pages regarding my question:\n\n`;
     
-    // Maximum content length per source to keep total size manageable
-    const maxContentPerSource = 6000;
+    // No content length limits per source as requested
     
     scrapedResults.forEach((result, index) => {
         formattedContent += `--- SOURCE ${index + 1} ---\n`;
         formattedContent += `URL: ${result.url}\n`;
         formattedContent += `TITLE: ${result.title}\n`;
-        
-        // Limit the size of each source's content
-        let content = result.content;
-        if (content.length > maxContentPerSource) {
-            content = content.substring(0, maxContentPerSource) + '... [content truncated]';
-        }
-        
-        formattedContent += `CONTENT: ${content}\n\n`;
+        formattedContent += `CONTENT: ${result.content}\n\n`;
     });
     
     formattedContent += `My question is: ${commandContent}`;
     
-    // Ensure total message size is reasonable for Claude's context window
-    const maxTotalLength = 100000;
-    if (formattedContent.length > maxTotalLength) {
-        // If too large, keep the beginning and end parts
-        const halfLength = Math.floor(maxTotalLength / 2) - 100;
-        formattedContent = 
-            formattedContent.substring(0, halfLength) + 
-            '\n\n... [content truncated due to size] ...\n\n' + 
-            formattedContent.substring(formattedContent.length - halfLength);
-    }
+    // No total length limit as requested
     
     return formattedContent;
 };
