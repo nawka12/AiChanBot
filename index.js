@@ -183,11 +183,37 @@ const performSearch = async (command, queryAI, commandContent, message) => {
     } else if (command === 'deepsearch') {
         const queries = queryAI.content[0].text.split(',').map(q => q.trim());
         let allResults = [];
+        const seenUrls = new Set(); // Keep track of URLs we've already added
         
         for (let query of queries) {
             await message.channel.send(`Searching the web for \`${query}\``);
             const searchResult = await searchQuery(query);
-            allResults = allResults.concat(searchResult.results.slice(0, MAX_SEARCH_RESULTS));
+            
+            // Try to get MAX_SEARCH_RESULTS unique results from each query
+            let uniqueResults = [];
+            let resultsIndex = 0;
+            
+            // Loop through search results until we have enough unique results
+            // or until we've gone through all available results
+            while (uniqueResults.length < MAX_SEARCH_RESULTS && resultsIndex < searchResult.results.length) {
+                const result = searchResult.results[resultsIndex];
+                
+                // Only add results with URLs we haven't seen before
+                if (!seenUrls.has(result.url)) {
+                    uniqueResults.push(result);
+                    seenUrls.add(result.url);
+                }
+                
+                resultsIndex++;
+            }
+            
+            // Add unique results to our collection
+            allResults = allResults.concat(uniqueResults);
+            
+            // If we couldn't find enough unique results, log a message
+            if (uniqueResults.length < MAX_SEARCH_RESULTS) {
+                console.log(`Query "${query}" returned ${uniqueResults.length} unique results after deduplication.`);
+            }
         }
         
         return formatSearchResults(allResults, commandContent);
