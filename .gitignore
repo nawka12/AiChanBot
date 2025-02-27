@@ -16,3 +16,5 @@ yarn-error.log*
 .vscode
 *.swp
 *.swo 
+
+README-deepsearch-new.md

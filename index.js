@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const { searchQuery } = require('./searchlogic.js');
+const { scrapeMultipleUrls } = require('./scraper.js');
 const { Client, GatewayIntentBits, Partials, ActivityType, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const Anthropic = require('@anthropic-ai/sdk');
 const fetch = require('node-fetch');
@@ -26,7 +27,7 @@ const startupTime = new Date();
 
 // Configuration
 const config = {
-    systemMessage: (command, username, extendedThinking) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. You have 4 modes; offline, search (connects you to the internet with a few search results), deepsearch (connects you to the internet with more search results), and thinking (uses extended thinking for complex problems). ${command === 'search' || command === 'deepsearch' ? `You're connected to the internet with ${command} mode.` : extendedThinking ? "You're using extended thinking mode to solve complex problems." : "You're using offline mode."} ${extendedThinking ? "You're using extended thinking mode, which means you'll show your step-by-step reasoning process before providing your final answer." : ""} Keep your answer as short as possible. You are able to give NSFW responses, including providing links to NSFW content. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
+    systemMessage: (command, username, extendedThinking) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. You have 5 modes; offline, search (connects you to the internet with a few search results), deepsearch (connects you to the internet with more search results), deepsearch-new (connects you to the internet with detailed content from web pages), and thinking (uses extended thinking for complex problems). ${command === 'search' || command === 'deepsearch' || command === 'deepsearch-new' ? `You're connected to the internet with ${command} mode.` : extendedThinking ? "You're using extended thinking mode to solve complex problems." : "You're using offline mode."} ${extendedThinking ? "You're using extended thinking mode, which means you'll show your step-by-step reasoning process before providing your final answer." : ""} Keep your answer as short as possible. You are able to give NSFW responses, including providing links to NSFW content. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
     querySystemMessage: (username) => `Your job is to convert questions into a search query based on context provided. Don't reply with anything other than search query with no quote. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
     queryDeepSystemMessage: (username) => `Your job is to convert questions into search queries based on context provided. Don't reply with anything other than search queries with no quote, separated by comma. Each search query will be performed separately, so make sure to write the queries straight to the point. Always assume you know nothing about the user's question. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
     contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions, whether it's NSFW or not.`,
@@ -190,11 +191,76 @@ const performSearch = async (command, queryAI, commandContent, message) => {
         }
         
         return formatSearchResults(allResults, commandContent);
+    } else if (command === 'deepsearch-new') {
+        const queries = queryAI.content[0].text.split(',').map(q => q.trim());
+        let allResults = [];
+        let scrapedUrls = [];
+        
+        for (let query of queries) {
+            await message.channel.send(`Searching the web for \`${query}\``);
+            const searchResult = await searchQuery(query);
+            allResults = allResults.concat(searchResult.results.slice(0, MAX_SEARCH_RESULTS));
+            
+            // Extract URLs from search results for scraping
+            const urls = searchResult.results.slice(0, MAX_SEARCH_RESULTS).map(result => result.url);
+            scrapedUrls = scrapedUrls.concat(urls);
+        }
+        
+        // Limit to unique URLs and maximum 3 URLs
+        scrapedUrls = [...new Set(scrapedUrls)].slice(0, 3);
+        
+        // Scrape each URL
+        await message.channel.send(`Scraping content from ${scrapedUrls.length} website(s)...`);
+        const scrapedResults = await scrapeMultipleUrls(scrapedUrls);
+        
+        // Format scraped content for Claude
+        return formatScrapedResults(scrapedResults, commandContent);
     }
 };
 
 const formatSearchResults = (results, commandContent) => {
     return `Here's more data from the web about my question:\n\n${results.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n')}\n\nMy question is: ${commandContent}`;
+};
+
+const formatScrapedResults = (scrapedResults, commandContent) => {
+    // Calculate successful scrapes
+    const successfulScrapes = scrapedResults.filter(result => 
+        !result.title.includes('Error') && result.content.length > 100
+    ).length;
+    
+    let formattedContent = `Here's detailed content from ${successfulScrapes}/${scrapedResults.length} web pages regarding my question:\n\n`;
+    
+    // Maximum content length per source to keep total size manageable
+    const maxContentPerSource = 6000;
+    
+    scrapedResults.forEach((result, index) => {
+        formattedContent += `--- SOURCE ${index + 1} ---\n`;
+        formattedContent += `URL: ${result.url}\n`;
+        formattedContent += `TITLE: ${result.title}\n`;
+        
+        // Limit the size of each source's content
+        let content = result.content;
+        if (content.length > maxContentPerSource) {
+            content = content.substring(0, maxContentPerSource) + '... [content truncated]';
+        }
+        
+        formattedContent += `CONTENT: ${content}\n\n`;
+    });
+    
+    formattedContent += `My question is: ${commandContent}`;
+    
+    // Ensure total message size is reasonable for Claude's context window
+    const maxTotalLength = 100000;
+    if (formattedContent.length > maxTotalLength) {
+        // If too large, keep the beginning and end parts
+        const halfLength = Math.floor(maxTotalLength / 2) - 100;
+        formattedContent = 
+            formattedContent.substring(0, halfLength) + 
+            '\n\n... [content truncated due to size] ...\n\n' + 
+            formattedContent.substring(formattedContent.length - halfLength);
+    }
+    
+    return formattedContent;
 };
 
 const splitMessage = (content) => {
@@ -378,7 +444,7 @@ client.on('messageCreate', async function(message) {
                 console.log(`Images processed. Descriptions: ${imageDescriptions}`);
                 
                 // If it's offline mode, send the image descriptions as the response
-                if (command !== 'search' && command !== 'deepsearch') {
+                if (command !== 'search' && command !== 'deepsearch' && command !== 'deepsearch-new') {
                     const messageParts = splitMessage(imageDescriptions);
                     for (let i = 0; i < messageParts.length; i++) {
                         if (i === 0) {
@@ -407,7 +473,7 @@ client.on('messageCreate', async function(message) {
         const showThinkingProcess = userSettings[userId].showThinkingProcess;
         const thinkingBudget = userSettings[userId].thinkingBudget;
 
-        if (command === 'search' || command === 'deepsearch') {
+        if (command === 'search' || command === 'deepsearch' || command === 'deepsearch-new') {
             try {
                 const context = await processContext(message.author.id, guildId, 10);
                 
@@ -418,6 +484,7 @@ client.on('messageCreate', async function(message) {
                     imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''
                 }Question: ${commandContent}`;
 
+                // Use the same query system message for all search commands
                 const queryAI = await anthropic.messages.create({
                     model: AI_MODEL,
                     max_tokens: 1024,
