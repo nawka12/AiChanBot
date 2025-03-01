@@ -5,9 +5,22 @@ const { scrapeMultipleUrls } = require('./scraper.js');
 const { Client, GatewayIntentBits, Partials, ActivityType, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const Anthropic = require('@anthropic-ai/sdk');
 const fetch = require('node-fetch');
+const fs = require('fs');
+const path = require('path');
 
 // Constants
 const AI_MODEL = 'claude-3-7-sonnet-latest';
+
+// Bot creator identification (using Discord user ID instead of username for security)
+// Add BOT_CREATOR_ID=your_discord_user_id to your .env file
+// To get your Discord user ID: Settings > Advanced > Developer Mode, then right-click your name and "Copy ID"
+const BOT_CREATOR_ID = process.env.BOT_CREATOR_ID || ''; // Get from environment variable
+
+// Function to check if a user is the bot creator
+const isBotCreator = (userId) => {
+    return BOT_CREATOR_ID && userId === BOT_CREATOR_ID;
+};
+
 const NORMAL_MAX_TOKENS = 8192;
 const EXTENDED_THINKING_MAX_TOKENS = 64000;
 const MAX_SEARCH_RESULTS = 3;
@@ -24,6 +37,46 @@ const TIME_OPTIONS = {
 
 // Add new variable to store startup time
 const startupTime = new Date();
+
+// Define token data file path
+const TOKEN_DATA_FILE = path.join(__dirname, 'token_data.json');
+
+// Add token tracking variables
+let tokenTracking = {
+    lifetimeInputTokens: 0,
+    lifetimeOutputTokens: 0,
+    lifetimeCacheCreationInputTokens: 0,
+    lifetimeCacheReadInputTokens: 0,
+    cacheHits: 0,
+    cacheMisses: 0
+};
+
+// Load token tracking data if it exists
+try {
+    if (fs.existsSync(TOKEN_DATA_FILE)) {
+        const data = fs.readFileSync(TOKEN_DATA_FILE, 'utf8');
+        tokenTracking = JSON.parse(data);
+        console.log('Loaded token tracking data from file');
+    } else {
+        console.log('No token tracking data file found, starting with zero counts');
+    }
+} catch (error) {
+    console.error('Error loading token tracking data:', error);
+}
+
+// Function to save token tracking data
+const saveTokenData = () => {
+    try {
+        fs.writeFileSync(TOKEN_DATA_FILE, JSON.stringify(tokenTracking, null, 2), 'utf8');
+        console.log('Token tracking data saved to file');
+    } catch (error) {
+        console.error('Error saving token tracking data:', error);
+    }
+};
+
+// Token cost constants (per million tokens)
+const INPUT_TOKEN_COST_PER_MILLION = 3;
+const OUTPUT_TOKEN_COST_PER_MILLION = 15;
 
 // Configuration
 const config = {
@@ -328,6 +381,9 @@ const commands = [
         .setName('reset')
         .setDescription('Reset the conversation history'),
     new SlashCommandBuilder()
+        .setName('reset_tokens')
+        .setDescription('Reset token tracking statistics'),
+    new SlashCommandBuilder()
         .setName('status')
         .setDescription('Display current bot configuration and status')
 ];
@@ -556,6 +612,44 @@ client.on('messageCreate', async function(message) {
             // Make the API request
             const response = await anthropic.messages.create(apiParams);
             
+            // Track token usage
+            if (response.usage) {
+                const previousInputTokens = tokenTracking.lifetimeInputTokens;
+                const previousOutputTokens = tokenTracking.lifetimeOutputTokens;
+                
+                tokenTracking.lifetimeInputTokens += response.usage.input_tokens || 0;
+                tokenTracking.lifetimeOutputTokens += response.usage.output_tokens || 0;
+                
+                // Track cache usage if available
+                let cacheInfo = '';
+                if (response.usage.cache_creation_input_tokens) {
+                    tokenTracking.lifetimeCacheCreationInputTokens += response.usage.cache_creation_input_tokens;
+                    tokenTracking.cacheMisses++;
+                    cacheInfo = `, Cache: MISS (${response.usage.cache_creation_input_tokens} tokens)`;
+                }
+                if (response.usage.cache_read_input_tokens) {
+                    tokenTracking.lifetimeCacheReadInputTokens += response.usage.cache_read_input_tokens;
+                    tokenTracking.cacheHits++;
+                    cacheInfo = `, Cache: HIT (${response.usage.cache_read_input_tokens} tokens)`;
+                }
+                
+                // Calculate token increase
+                const inputIncrease = tokenTracking.lifetimeInputTokens - previousInputTokens;
+                const outputIncrease = tokenTracking.lifetimeOutputTokens - previousOutputTokens;
+                
+                // Calculate costs
+                const inputCost = (inputIncrease / 1000000) * INPUT_TOKEN_COST_PER_MILLION;
+                const outputCost = (outputIncrease / 1000000) * OUTPUT_TOKEN_COST_PER_MILLION;
+                const totalCost = inputCost + outputCost;
+                
+                console.log(`Token usage - Input: ${response.usage.input_tokens}, Output: ${response.usage.output_tokens}${cacheInfo}`);
+                console.log(`Cost of this request: $${totalCost.toFixed(6)} ($${inputCost.toFixed(6)} for input, $${outputCost.toFixed(6)} for output)`);
+                console.log(`Total lifetime tokens: ${tokenTracking.lifetimeInputTokens.toLocaleString()} input, ${tokenTracking.lifetimeOutputTokens.toLocaleString()} output`);
+                
+                // Save token data after each update
+                saveTokenData();
+            }
+            
             // Calculate thinking time if extended thinking was enabled
             if (isExtendedThinking && thinkingMessage) {
                 const endTime = Date.now();
@@ -667,6 +761,19 @@ client.on('messageCreate', async function(message) {
     }
 });
 
+// Function to reset token statistics
+const resetTokenStats = () => {
+    tokenTracking = {
+        lifetimeInputTokens: 0,
+        lifetimeOutputTokens: 0,
+        lifetimeCacheCreationInputTokens: 0,
+        lifetimeCacheReadInputTokens: 0,
+        cacheHits: 0,
+        cacheMisses: 0
+    };
+    saveTokenData();
+};
+
 // Handle slash commands
 client.on('interactionCreate', async interaction => {
     if (!interaction.isCommand()) return;
@@ -728,12 +835,41 @@ client.on('interactionCreate', async interaction => {
                     ephemeral: true
                 });
             }
+        } else if (commandName === 'reset_tokens') {
+            // Only allow the bot creator to reset tokens
+            if (!isBotCreator(user.id)) {
+                await interaction.reply({
+                    content: "Only the bot creator can reset token statistics.",
+                    ephemeral: true
+                });
+                return;
+            }
+            
+            resetTokenStats();
+            await interaction.reply({
+                content: "Token tracking statistics have been reset to zero.",
+                ephemeral: true
+            });
         } else if (commandName === 'status') {
+            // Calculate costs
+            const costs = calculateCosts();
+            
+            // Calculate average token usage per message
+            const totalMessages = 
+                Math.max(1, Object.values(userConversations).reduce((sum, conv) => sum + Math.floor(conv.length / 2), 0) + 
+               Object.values(guildConversations).reduce((sum, conv) => sum + Math.floor(conv.length / 2), 0));
+                       
+            const avgInputTokens = (tokenTracking.lifetimeInputTokens / totalMessages).toFixed(0);
+            const avgOutputTokens = (tokenTracking.lifetimeOutputTokens / totalMessages).toFixed(0);
+            
+            // Check if the user is the bot creator to show more detailed info
+            const isBotOwner = isBotCreator(user.id);
+            
             // Create an embed with the bot's status information
             const statusEmbed = new EmbedBuilder()
                 .setColor(0x00AAFF)
                 .setTitle('Ai-chan Status')
-                .setDescription('Current configuration and status information')
+                .setDescription(`Current configuration and status information${isBotOwner ? ' (Owner View)' : ''}`)
                 .setThumbnail(client.user.displayAvatarURL())
                 .addFields(
                     { name: 'AI Model', value: AI_MODEL, inline: true },
@@ -741,11 +877,64 @@ client.on('interactionCreate', async interaction => {
                     { name: 'Extended Max Tokens', value: EXTENDED_THINKING_MAX_TOKENS.toString(), inline: true },
                     { name: 'Thinking Mode', value: userSettings[user.id].extendedThinking ? 'ON' : 'OFF', inline: true },
                     { name: 'Show Thinking Process', value: userSettings[user.id].showThinkingProcess ? 'ON' : 'OFF', inline: true },
-                    { name: 'Thinking Budget', value: userSettings[user.id].thinkingBudget.toString(), inline: true },
-                    { name: 'Uptime', value: `Since ${startupTime.toLocaleDateString('en-US', DATE_OPTIONS)} ${startupTime.toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7)`, inline: false }
-                )
-                .setFooter({ text: 'Developer: kayfahaarukku' })
-                .setTimestamp();
+                    { name: 'Thinking Budget', value: userSettings[user.id].thinkingBudget.toString(), inline: true }
+                );
+                
+            // Always show token usage
+            statusEmbed.addFields(
+                { name: 'Lifetime Input Tokens', value: tokenTracking.lifetimeInputTokens.toLocaleString(), inline: true },
+                { name: 'Lifetime Output Tokens', value: tokenTracking.lifetimeOutputTokens.toLocaleString(), inline: true },
+                { name: 'Total Tokens', value: (tokenTracking.lifetimeInputTokens + tokenTracking.lifetimeOutputTokens).toLocaleString(), inline: true }
+            );
+            
+            // Show more detailed cost info for bot owner
+            if (isBotOwner) {
+                statusEmbed.addFields(
+                    { name: 'Avg. Input / Message', value: avgInputTokens, inline: true },
+                    { name: 'Avg. Output / Message', value: avgOutputTokens, inline: true },
+                    { name: 'Input Cost', value: `$${costs.inputCost} ($3/M)`, inline: true },
+                    { name: 'Output Cost', value: `$${costs.outputCost} ($15/M)`, inline: true },
+                    { name: 'Total Cost', value: `$${costs.totalCost}`, inline: true },
+                    { name: 'Total Messages', value: totalMessages.toString(), inline: true }
+                );
+            } else {
+                // Show simplified cost for regular users
+                statusEmbed.addFields(
+                    { name: 'Total Cost', value: `$${costs.totalCost}`, inline: true }
+                );
+            }
+
+            // Add cache information if there are any cache hits or misses
+            if (tokenTracking.cacheHits > 0 || tokenTracking.cacheMisses > 0) {
+                const cacheHitRate = (tokenTracking.cacheHits / (tokenTracking.cacheHits + tokenTracking.cacheMisses) * 100).toFixed(2);
+                const cacheSavings = (tokenTracking.lifetimeCacheReadInputTokens * INPUT_TOKEN_COST_PER_MILLION / 1000000).toFixed(4);
+                
+                // Different cache information depending on owner status
+                if (isBotOwner) {
+                    statusEmbed.addFields(
+                        { name: 'Cache Hits', value: tokenTracking.cacheHits.toString(), inline: true },
+                        { name: 'Cache Misses', value: tokenTracking.cacheMisses.toString(), inline: true },
+                        { name: 'Cache Hit Rate', value: `${cacheHitRate}%`, inline: true },
+                        { name: 'Cache Creation Tokens', value: tokenTracking.lifetimeCacheCreationInputTokens.toLocaleString(), inline: true },
+                        { name: 'Cache Read Tokens', value: tokenTracking.lifetimeCacheReadInputTokens.toLocaleString(), inline: true },
+                        { name: 'Est. Cache Savings', value: `$${cacheSavings}`, inline: true }
+                    );
+                } else {
+                    // Simplified cache info for regular users
+                    statusEmbed.addFields(
+                        { name: 'Cache Hit Rate', value: `${cacheHitRate}%`, inline: true },
+                        { name: 'Est. Cache Savings', value: `$${cacheSavings}`, inline: true }
+                    );
+                }
+            }
+
+            statusEmbed.addFields(
+                { name: 'Uptime', value: `Since ${startupTime.toLocaleDateString('en-US', DATE_OPTIONS)} ${startupTime.toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7)`, inline: false }
+            );
+
+            // Add footer and timestamp
+            statusEmbed.setFooter({ text: 'Developer: kayfahaarukku' })
+                       .setTimestamp();
 
             await interaction.reply({
                 embeds: [statusEmbed],
@@ -789,4 +978,31 @@ client.once('ready', async () => {
         }],
         status: 'online'
     });
+
+    // Schedule token data saves every hour as an additional safety measure
+    setInterval(saveTokenData, 60 * 60 * 1000);
 });
+
+// Add shutdown handler to save token data before exit
+process.on('SIGINT', () => {
+    console.log('Saving token data before shutdown...');
+    saveTokenData();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    console.log('Saving token data before shutdown...');
+    saveTokenData();
+    process.exit(0);
+});
+
+// Add function to calculate costs
+const calculateCosts = () => {
+    const inputCost = (tokenTracking.lifetimeInputTokens / 1000000) * INPUT_TOKEN_COST_PER_MILLION;
+    const outputCost = (tokenTracking.lifetimeOutputTokens / 1000000) * OUTPUT_TOKEN_COST_PER_MILLION;
+    return {
+        inputCost: inputCost.toFixed(4),
+        outputCost: outputCost.toFixed(4),
+        totalCost: (inputCost + outputCost).toFixed(4)
+    };
+};
