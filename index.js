@@ -48,7 +48,8 @@ let tokenTracking = {
     lifetimeCacheCreationInputTokens: 0,
     lifetimeCacheReadInputTokens: 0,
     cacheHits: 0,
-    cacheMisses: 0
+    cacheMisses: 0,
+    trackingSince: new Date().toISOString() // Add tracking start date
 };
 
 // Load token tracking data if it exists
@@ -769,9 +770,16 @@ const resetTokenStats = () => {
         lifetimeCacheCreationInputTokens: 0,
         lifetimeCacheReadInputTokens: 0,
         cacheHits: 0,
-        cacheMisses: 0
+        cacheMisses: 0,
+        trackingSince: new Date().toISOString() // Update to current time when reset
     };
     saveTokenData();
+};
+
+// Function to format tracking date in a human-readable format
+const formatTrackingDate = (isoString) => {
+    const date = new Date(isoString);
+    return `${date.toLocaleDateString('en-US', DATE_OPTIONS)} ${date.toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7)`;
 };
 
 // Handle slash commands
@@ -845,6 +853,8 @@ client.on('interactionCreate', async interaction => {
                 return;
             }
             
+            console.log(`Token statistics reset by ${user.username} (${user.id}). Previous data: ${tokenTracking.lifetimeInputTokens.toLocaleString()} input tokens, ${tokenTracking.lifetimeOutputTokens.toLocaleString()} output tokens since ${formatTrackingDate(tokenTracking.trackingSince)}`);
+            
             resetTokenStats();
             await interaction.reply({
                 content: "Token tracking statistics have been reset to zero.",
@@ -880,16 +890,13 @@ client.on('interactionCreate', async interaction => {
                     { name: 'Thinking Budget', value: userSettings[user.id].thinkingBudget.toString(), inline: true }
                 );
                 
-            // Always show token usage
-            statusEmbed.addFields(
-                { name: 'Lifetime Input Tokens', value: tokenTracking.lifetimeInputTokens.toLocaleString(), inline: true },
-                { name: 'Lifetime Output Tokens', value: tokenTracking.lifetimeOutputTokens.toLocaleString(), inline: true },
-                { name: 'Total Tokens', value: (tokenTracking.lifetimeInputTokens + tokenTracking.lifetimeOutputTokens).toLocaleString(), inline: true }
-            );
-            
-            // Show more detailed cost info for bot owner
+            // Only show token usage to bot owner
             if (isBotOwner) {
                 statusEmbed.addFields(
+                    { name: 'Tracking Since', value: formatTrackingDate(tokenTracking.trackingSince), inline: false },
+                    { name: 'Lifetime Input Tokens', value: tokenTracking.lifetimeInputTokens.toLocaleString(), inline: true },
+                    { name: 'Lifetime Output Tokens', value: tokenTracking.lifetimeOutputTokens.toLocaleString(), inline: true },
+                    { name: 'Total Tokens', value: (tokenTracking.lifetimeInputTokens + tokenTracking.lifetimeOutputTokens).toLocaleString(), inline: true },
                     { name: 'Avg. Input / Message', value: avgInputTokens, inline: true },
                     { name: 'Avg. Output / Message', value: avgOutputTokens, inline: true },
                     { name: 'Input Cost', value: `$${costs.inputCost} ($3/M)`, inline: true },
@@ -897,20 +904,12 @@ client.on('interactionCreate', async interaction => {
                     { name: 'Total Cost', value: `$${costs.totalCost}`, inline: true },
                     { name: 'Total Messages', value: totalMessages.toString(), inline: true }
                 );
-            } else {
-                // Show simplified cost for regular users
-                statusEmbed.addFields(
-                    { name: 'Total Cost', value: `$${costs.totalCost}`, inline: true }
-                );
-            }
-
-            // Add cache information if there are any cache hits or misses
-            if (tokenTracking.cacheHits > 0 || tokenTracking.cacheMisses > 0) {
-                const cacheHitRate = (tokenTracking.cacheHits / (tokenTracking.cacheHits + tokenTracking.cacheMisses) * 100).toFixed(2);
-                const cacheSavings = (tokenTracking.lifetimeCacheReadInputTokens * INPUT_TOKEN_COST_PER_MILLION / 1000000).toFixed(4);
                 
-                // Different cache information depending on owner status
-                if (isBotOwner) {
+                // Add cache information if there are any cache hits or misses
+                if (tokenTracking.cacheHits > 0 || tokenTracking.cacheMisses > 0) {
+                    const cacheHitRate = (tokenTracking.cacheHits / (tokenTracking.cacheHits + tokenTracking.cacheMisses) * 100).toFixed(2);
+                    const cacheSavings = (tokenTracking.lifetimeCacheReadInputTokens * INPUT_TOKEN_COST_PER_MILLION / 1000000).toFixed(4);
+                    
                     statusEmbed.addFields(
                         { name: 'Cache Hits', value: tokenTracking.cacheHits.toString(), inline: true },
                         { name: 'Cache Misses', value: tokenTracking.cacheMisses.toString(), inline: true },
@@ -919,13 +918,12 @@ client.on('interactionCreate', async interaction => {
                         { name: 'Cache Read Tokens', value: tokenTracking.lifetimeCacheReadInputTokens.toLocaleString(), inline: true },
                         { name: 'Est. Cache Savings', value: `$${cacheSavings}`, inline: true }
                     );
-                } else {
-                    // Simplified cache info for regular users
-                    statusEmbed.addFields(
-                        { name: 'Cache Hit Rate', value: `${cacheHitRate}%`, inline: true },
-                        { name: 'Est. Cache Savings', value: `$${cacheSavings}`, inline: true }
-                    );
                 }
+            } else {
+                // For regular users, just mention that usage is being tracked
+                statusEmbed.addFields(
+                    { name: 'Token Usage', value: `Token usage statistics are tracked since ${formatTrackingDate(tokenTracking.trackingSince)} but only visible to the bot owner.`, inline: false }
+                );
             }
 
             statusEmbed.addFields(
@@ -956,6 +954,10 @@ console.log("Ai-chan is Online");
 // Add a ready event handler to verify intents and register slash commands
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}`);
+    
+    // Log token tracking information
+    console.log(`Token tracking active since: ${formatTrackingDate(tokenTracking.trackingSince)}`);
+    console.log(`Current token counts: ${tokenTracking.lifetimeInputTokens.toLocaleString()} input, ${tokenTracking.lifetimeOutputTokens.toLocaleString()} output`);
     
     try {
         console.log('Started refreshing application (/) commands.');
