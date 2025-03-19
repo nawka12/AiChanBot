@@ -275,23 +275,46 @@ const performSearch = async (command, queryAI, commandContent, message) => {
         
         return formatSearchResults(allResults, commandContent);
     } else if (command === 'webscrape') {
-        // Use a single query like the search command
-        const finalQuery = queryAI.content[0].text;
-        await message.channel.send(`Searching the web for \`${finalQuery}\``);
-        const searchResult = await searchQuery(finalQuery);
+        // Check if the commandContent looks like a URL
+        const urlRegex = /^(https?:\/\/)[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,5}(:[0-9]{1,5})?(\/.*)?$/i;
         
-        // Get more results from search to have backups in case scraping fails
-        const results = searchResult.results.slice(0, MAX_SEARCH_RESULTS * 3); // Get 9 results instead of 3
-        
-        // Extract URLs from search results for scraping
-        const urls = results.map(result => result.url);
-        
-        // Scrape content from URLs
-        await message.channel.send(`Scraping content from up to 3 websites (will try additional sites if some fail)...`);
-        const scrapedResults = await scrapeMultipleUrls(urls);
-        
-        // Format scraped content for Claude
-        return formatScrapedResults(scrapedResults, commandContent);
+        if (urlRegex.test(commandContent.trim())) {
+            // Direct URL scraping
+            const url = commandContent.trim();
+            await message.channel.send(`Scraping content from \`${url}\`...`);
+            
+            try {
+                const scrapedResults = await scrapeMultipleUrls([url]);
+                
+                // Check if scraping failed
+                if (scrapedResults.length === 0 || scrapedResults[0].title.includes('Error') || scrapedResults[0].content.length < 100) {
+                    return `I'm sorry, I'm unable to access the web page you provided.`;
+                }
+                
+                return formatScrapedResults(scrapedResults, `Information from ${url}`);
+            } catch (error) {
+                console.error("Scraping Error:", error);
+                return `I'm sorry, I'm unable to access the web page you provided.`;
+            }
+        } else {
+            // Use a single query like the search command
+            const finalQuery = queryAI.content[0].text;
+            await message.channel.send(`Searching the web for \`${finalQuery}\``);
+            const searchResult = await searchQuery(finalQuery);
+            
+            // Get more results from search to have backups in case scraping fails
+            const results = searchResult.results.slice(0, MAX_SEARCH_RESULTS * 3); // Get 9 results instead of 3
+            
+            // Extract URLs from search results for scraping
+            const urls = results.map(result => result.url);
+            
+            // Scrape content from URLs
+            await message.channel.send(`Scraping content from up to 3 websites (will try additional sites if some fail)...`);
+            const scrapedResults = await scrapeMultipleUrls(urls);
+            
+            // Format scraped content for Claude
+            return formatScrapedResults(scrapedResults, commandContent);
+        }
     }
 };
 
