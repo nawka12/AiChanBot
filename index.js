@@ -278,9 +278,14 @@ const performSearch = async (command, queryAI, commandContent, message) => {
         // Check if the commandContent looks like a URL
         const urlRegex = /^(https?:\/\/)[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,5}(:[0-9]{1,5})?(\/.*)?$/i;
         
-        if (urlRegex.test(commandContent.trim())) {
+        // Extract the first part of commandContent as the URL (up to the first space)
+        const parts = commandContent.trim().split(/\s+/);
+        const possibleUrl = parts[0];
+        const queryText = parts.slice(1).join(' ');
+        
+        if (urlRegex.test(possibleUrl)) {
             // Direct URL scraping
-            const url = commandContent.trim();
+            const url = possibleUrl;
             await message.channel.send(`Scraping content from \`${url}\`...`);
             
             try {
@@ -291,7 +296,7 @@ const performSearch = async (command, queryAI, commandContent, message) => {
                     return `I'm sorry, I'm unable to access the web page you provided.`;
                 }
                 
-                return formatScrapedResults(scrapedResults, `Information from ${url}`);
+                return formatScrapedResults(scrapedResults, queryText || `Information from ${url}`);
             } catch (error) {
                 console.error("Scraping Error:", error);
                 return `I'm sorry, I'm unable to access the web page you provided.`;
