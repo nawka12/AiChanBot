@@ -418,7 +418,145 @@ async function scrapeMultipleUrls(urls) {
     }
 }
 
+/**
+ * Scrape a single URL and return its content
+ * @param {string} url - The URL to scrape
+ * @returns {Promise<Object>} - A promise that resolves to an object with url, content, and title
+ */
+async function scrapeUrl(url) {
+  console.log(`Scraping single URL: ${url}`);
+  
+  // Check if it's a Reddit URL
+  if (url.includes('reddit.com')) {
+    return await scrapeReddit(url);
+  }
+  
+  // Check if it's a Fandom URL
+  if (url.includes('fandom.com') || url.includes('wikia.com')) {
+    return await scrapeFandom(url);
+  }
+  
+  // Default scraper for other websites
+  return await scrapeGeneric(url);
+}
+
+/**
+ * Scrape multiple URLs and return their contents
+ * @param {Array<string>} urls - The URLs to scrape
+ * @returns {Promise<Array<Object>>} - A promise that resolves to an array of objects with url, content, and title
+ */
+async function scrapeMultipleUrls(urls) {
+  console.log(`Scraping multiple URLs: ${urls.length} URLs`);
+  
+  // Process URLs concurrently with a limit of 5 concurrent requests
+  const results = [];
+  const batchSize = 5;
+  
+  for (let i = 0; i < urls.length; i += batchSize) {
+    const batch = urls.slice(i, i + batchSize);
+    const batchPromises = batch.map(url => scrapeUrl(url));
+    
+    const batchResults = await Promise.all(
+      batchPromises.map(p => p.catch(err => ({ 
+        url: 'unknown', 
+        content: `Error: ${err.message}`, 
+        title: 'Error scraping URL' 
+      })))
+    );
+    
+    results.push(...batchResults);
+  }
+  
+  return results;
+}
+
+/**
+ * Generic scraper for websites other than Reddit and Fandom
+ * @param {string} url - The URL to scrape
+ * @returns {Promise<Object>} - A promise that resolves to an object with url, content, and title
+ */
+async function scrapeGeneric(url) {
+  try {
+    console.log(`Generic scraping for URL: ${url}`);
+    
+    // Make the request with appropriate headers
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
+        'Referer': 'https://www.google.com/'
+      },
+      timeout: 15000
+    });
+    
+    // Load the HTML into cheerio
+    const $ = cheerio.load(response.data);
+    
+    // Extract the title
+    const title = $('title').text().trim() || 'No title found';
+    
+    // Extract the main content
+    // This is a heuristic approach that looks for common content containers
+    const contentSelectors = [
+      'article', 'main', '.content', '#content', '.article', 
+      '.post', '.entry', '[role="main"]', '.main-content',
+      '.article-content', '.entry-content', '.post-content'
+    ];
+    
+    let content = '';
+    
+    // Try each selector to find content
+    for (const selector of contentSelectors) {
+      const element = $(selector);
+      if (element.length > 0) {
+        // Extract text from the first matching element
+        content = element.text().trim();
+        if (content.length > 100) {  // If we found substantial content, use it
+          break;
+        }
+      }
+    }
+    
+    // If no content was found with selectors, grab the body text
+    if (!content || content.length < 100) {
+      // Remove script, style, nav, footer, and header elements before extracting text
+      $('script, style, nav, footer, header, aside, .sidebar, .comments, .ad, .advertisement').remove();
+      content = $('body').text().trim();
+      
+      // Clean up the content - remove extra whitespace
+      content = content.replace(/\s+/g, ' ');
+    }
+    
+    return {
+      url,
+      content: content || 'No content extracted from page',
+      title
+    };
+  } catch (error) {
+    console.error(`Error in generic scraping for ${url}:`, error.message);
+    return {
+      url,
+      content: `Failed to scrape content: ${error.message}`,
+      title: 'Scraping Error'
+    };
+  }
+}
+
+// Export functions
 module.exports = {
-    scrapeUrl,
-    scrapeMultipleUrls
+  scrapeUrl,
+  scrapeMultipleUrls,
+  scrapeReddit,
+  scrapeFandom,
+  scrapeGeneric
 };

@@ -1,7 +1,7 @@
 require('dotenv').config();
 
-const { searchQuery } = require('./searchlogic.js');
-const { scrapeMultipleUrls } = require('./scraper.js');
+
+const { TOOL_SCHEMAS, executeToolCalls } = require('./tools.js');
 const { Client, GatewayIntentBits, Partials, ActivityType, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const Anthropic = require('@anthropic-ai/sdk');
 const fetch = require('node-fetch');
@@ -23,7 +23,6 @@ const isBotCreator = (userId) => {
 
 const NORMAL_MAX_TOKENS = 8192;
 const EXTENDED_THINKING_MAX_TOKENS = 64000;
-const MAX_SEARCH_RESULTS = 3;
 const MAX_MESSAGE_LENGTH = 2000;
 const MIN_THINKING_BUDGET = 1024;
 const DEFAULT_THINKING_BUDGET = 8192;
@@ -81,9 +80,7 @@ const OUTPUT_TOKEN_COST_PER_MILLION = 15;
 
 // Configuration
 const config = {
-    systemMessage: (command, username, extendedThinking) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. You have 5 modes; offline, search (connects you to the internet with a few search results), deepsearch (connects you to the internet with more search results), webscrape (connects you to the internet with detailed content from web pages), and thinking (uses extended thinking for complex problems). ${command === 'search' || command === 'deepsearch' || command === 'webscrape' ? `You're connected to the internet with ${command} mode.` : extendedThinking ? "You're using extended thinking mode to solve complex problems." : "You're using offline mode."} ${extendedThinking ? "You're using extended thinking mode, which means you'll show your step-by-step reasoning process before providing your final answer." : ""} Keep your answer as short as possible. You are able to give NSFW responses, including providing links to NSFW content. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
-    querySystemMessage: (username) => `Your job is to convert questions into a search query based on context provided. Don't reply with anything other than search query with no quote. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
-    queryDeepSystemMessage: (username) => `Your job is to convert questions into search queries based on context provided. Don't reply with anything other than search queries with no quote, separated by comma. Each search query will be performed separately, so make sure to write the queries straight to the point. Always assume you know nothing about the user's question. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
+    systemMessage: (username, extendedThinking) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. You have 2 modes; standard and thinking (uses extended thinking for complex problems). ${extendedThinking ? "You're using extended thinking mode to solve complex problems." : "You're using standard mode."} ${extendedThinking ? "You're using extended thinking mode, which means you'll show your step-by-step reasoning process before providing your final answer." : ""} Keep your answer as short as possible. You have access to web search and web scraping tools. You can only use web scraping tools once. If it possible to answer the user's question with only web search, do not use web scraping tools. If the user's question needs web scraping, but not too complex, use web scrape instead of multi scrape. You are able to give NSFW responses, including providing links to NSFW content. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
     contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions, whether it's NSFW or not.`,
 };
 
@@ -140,7 +137,7 @@ const processImages = async (attachments, userId, guildId, input) => {
             const imageAI = await anthropic.messages.create({
                 model: AI_MODEL,
                 max_tokens: NORMAL_MAX_TOKENS,
-                system: `${config.systemMessage('offline', userId, false)} Describe the image concisely and answer the user's question if provided.`,
+                system: `${config.systemMessage(userId, false)} Describe the image concisely and answer the user's question if provided.`,
                 messages: [
                     ...conversationHistory,
                     {
@@ -189,166 +186,6 @@ const processImages = async (attachments, userId, guildId, input) => {
     }
 
     return imageDescriptions.join('\n\n');
-};
-
-const processContext = async (userId, guildId, messageCount = 10) => {
-    const conversationHistory = guildId ? 
-        guildConversations[guildId] : 
-        userConversations[userId];
-    
-    if (!conversationHistory || conversationHistory.length < 2) return '';
-
-    // Take last N messages instead of just 2
-    const recentConversations = conversationHistory
-        .slice(-messageCount)
-        .map(conv => {
-            if (typeof conv.content === 'string') {
-                return conv.content;
-            } else if (Array.isArray(conv.content)) {
-                return conv.content.map(item => 
-                    item.type === 'text' ? item.text : '[Image]'
-                ).join(' ');
-            }
-            return JSON.stringify(conv.content);
-        })
-        .join('\n');
-
-    const contextAI = await anthropic.messages.create({
-        model: AI_MODEL,
-        max_tokens: 200,
-        system: config.contextSystemMessage,
-        messages: [
-            {"role": "user", "content": recentConversations}
-        ],
-    });
-    
-    const contextSummary = contextAI.content[0].text;
-    console.log(`Generated context for ${userId}:`, contextSummary);
-    return contextSummary;
-};
-
-const performSearch = async (command, queryAI, commandContent, message) => {
-    if (command === 'search') {
-        const finalQuery = queryAI.content[0].text;
-        await message.channel.send(`Searching the web for \`${finalQuery}\``);
-        const searchResult = await searchQuery(finalQuery);
-        const results = searchResult.results.slice(0, MAX_SEARCH_RESULTS);
-        return formatSearchResults(results, commandContent);
-    } else if (command === 'deepsearch') {
-        const queries = queryAI.content[0].text.split(',').map(q => q.trim());
-        let allResults = [];
-        const seenUrls = new Set(); // Keep track of URLs we've already added
-        
-        for (let query of queries) {
-            await message.channel.send(`Searching the web for \`${query}\``);
-            const searchResult = await searchQuery(query);
-            
-            // Try to get MAX_SEARCH_RESULTS unique results from each query
-            let uniqueResults = [];
-            let resultsIndex = 0;
-            
-            // Loop through search results until we have enough unique results
-            // or until we've gone through all available results
-            while (uniqueResults.length < MAX_SEARCH_RESULTS && resultsIndex < searchResult.results.length) {
-                const result = searchResult.results[resultsIndex];
-                
-                // Only add results with URLs we haven't seen before
-                if (!seenUrls.has(result.url)) {
-                    uniqueResults.push(result);
-                    seenUrls.add(result.url);
-                } else {
-                    // Log when a result is skipped due to duplication
-                    console.log(`Skipped duplicate result: ${result.url} from query "${query}"`);
-                }
-                
-                resultsIndex++;
-            }
-            
-            // Add unique results to our collection
-            allResults = allResults.concat(uniqueResults);
-            
-            // If we couldn't find enough unique results, log a message
-            if (uniqueResults.length < MAX_SEARCH_RESULTS) {
-                console.log(`Query "${query}" returned ${uniqueResults.length} unique results after deduplication.`);
-            }
-        }
-        
-        return formatSearchResults(allResults, commandContent);
-    } else if (command === 'webscrape') {
-        // Check if the commandContent looks like a URL
-        const urlRegex = /^(https?:\/\/)[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,5}(:[0-9]{1,5})?(\/.*)?$/i;
-        
-        // Extract the first part of commandContent as the URL (up to the first space)
-        const parts = commandContent.trim().split(/\s+/);
-        const possibleUrl = parts[0];
-        const queryText = parts.slice(1).join(' ');
-        
-        if (urlRegex.test(possibleUrl)) {
-            // Direct URL scraping
-            const url = possibleUrl;
-            await message.channel.send(`Scraping content from \`${url}\`...`);
-            
-            try {
-                const scrapedResults = await scrapeMultipleUrls([url]);
-                
-                // Check if scraping failed
-                if (scrapedResults.length === 0 || scrapedResults[0].title.includes('Error') || scrapedResults[0].content.length < 100) {
-                    return `I'm sorry, I'm unable to access the web page you provided.`;
-                }
-                
-                return formatScrapedResults(scrapedResults, queryText || `Information from ${url}`);
-            } catch (error) {
-                console.error("Scraping Error:", error);
-                return `I'm sorry, I'm unable to access the web page you provided.`;
-            }
-        } else {
-            // Use a single query like the search command
-            const finalQuery = queryAI.content[0].text;
-            await message.channel.send(`Searching the web for \`${finalQuery}\``);
-            const searchResult = await searchQuery(finalQuery);
-            
-            // Get more results from search to have backups in case scraping fails
-            const results = searchResult.results.slice(0, MAX_SEARCH_RESULTS * 3); // Get 9 results instead of 3
-            
-            // Extract URLs from search results for scraping
-            const urls = results.map(result => result.url);
-            
-            // Scrape content from URLs
-            await message.channel.send(`Scraping content from up to 3 websites (will try additional sites if some fail)...`);
-            const scrapedResults = await scrapeMultipleUrls(urls);
-            
-            // Format scraped content for Claude
-            return formatScrapedResults(scrapedResults, commandContent);
-        }
-    }
-};
-
-const formatSearchResults = (results, commandContent) => {
-    return `Here's more data from the web about my question:\n\n${results.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n')}\n\nMy question is: ${commandContent}`;
-};
-
-const formatScrapedResults = (scrapedResults, commandContent) => {
-    // Calculate successful scrapes
-    const successfulScrapes = scrapedResults.filter(result => 
-        !result.title.includes('Error') && result.content.length > 100
-    ).length;
-    
-    let formattedContent = `Here's detailed content from ${successfulScrapes}/${scrapedResults.length} web pages regarding my question:\n\n`;
-    
-    // No content length limits per source as requested
-    
-    scrapedResults.forEach((result, index) => {
-        formattedContent += `--- SOURCE ${index + 1} ---\n`;
-        formattedContent += `URL: ${result.url}\n`;
-        formattedContent += `TITLE: ${result.title}\n`;
-        formattedContent += `CONTENT: ${result.content}\n\n`;
-    });
-    
-    formattedContent += `My question is: ${commandContent}`;
-    
-    // No total length limit as requested
-    
-    return formattedContent;
 };
 
 const splitMessage = (content) => {
@@ -437,9 +274,6 @@ client.on('messageCreate', async function(message) {
             .replace(/<@&\d+>/g, '')
             .trim();
 
-        // Preserve newlines in the original message but create a version without them for command detection
-        const inputForCommandDetection = input.replace(/\n+/g, ' ');
-        
         // Check if the message is a reply to another message
         let replyContext = '';
         if (message.reference && message.reference.messageId) {
@@ -475,11 +309,6 @@ client.on('messageCreate', async function(message) {
                 console.error("Error fetching replied message:", error);
             }
         }
-        
-        // Extract command BEFORE combining with reply context
-        const [rawCommand, ...contentParts] = inputForCommandDetection.split(' ');
-        const command = rawCommand.toLowerCase();
-        const commandContent = contentParts.join(' ');
 
         // Combine reply context with user input AFTER command extraction
         let fullInput = input;
@@ -517,7 +346,7 @@ client.on('messageCreate', async function(message) {
         }
 
         // Handle reset command
-        if (command === 'reset') {
+        if (input.toLowerCase() === 'reset') {
             if (isDM) {
                 userConversations[message.author.id] = [];
                 await message.reply("Ai-chan's personal conversations with you have been reset.");
@@ -534,8 +363,8 @@ client.on('messageCreate', async function(message) {
                 imageDescriptions = await processImages(message.attachments, message.author.id, guildId, fullInput);
                 console.log(`Images processed. Descriptions: ${imageDescriptions}`);
                 
-                // If it's offline mode, send the image descriptions as the response
-                if (command !== 'search' && command !== 'deepsearch' && command !== 'webscrape') {
+                // If there are only image attachments and no text, send the image descriptions and return
+                if (!fullInput && imageDescriptions) {
                     const messageParts = splitMessage(imageDescriptions);
                     for (let i = 0; i < messageParts.length; i++) {
                         if (i === 0) {
@@ -547,7 +376,7 @@ client.on('messageCreate', async function(message) {
                             await message.channel.send(messageParts[i]);
                         }
                     }
-                    return; // Exit the function here for offline mode with images
+                    return;
                 }
             } catch (error) {
                 console.error("Error processing images:", error);
@@ -556,60 +385,26 @@ client.on('messageCreate', async function(message) {
             }
         }
 
-        let messages = [];
-        let searchContent = '';
-        
-        // Check if extended thinking is enabled for this user
-        const isExtendedThinking = userSettings[userId].extendedThinking;
-        const showThinkingProcess = userSettings[userId].showThinkingProcess;
-        const thinkingBudget = userSettings[userId].thinkingBudget;
-
-        if (command === 'search' || command === 'deepsearch' || command === 'webscrape') {
-            try {
-                const context = await processContext(message.author.id, guildId, 10);
-                
-                // Build a more comprehensive query context that includes reply information
-                const queryContext = `${context ? `Context: ${context}\n` : ''}${
-                    replyContext ? `Reply context: ${replyContext}\n` : ''
-                }${
-                    imageDescriptions ? `Image descriptions: ${imageDescriptions}\n` : ''
-                }Question: ${commandContent}`;
-
-                // Use appropriate system message based on the command
-                const querySystemMessage = command === 'deepsearch' ? 
-                    config.queryDeepSystemMessage(message.author.username) : 
-                    config.querySystemMessage(message.author.username);
-                
-                const queryAI = await anthropic.messages.create({
-                    model: AI_MODEL,
-                    max_tokens: 1024,
-                    temperature: 0.7,
-                    system: querySystemMessage,
-                    messages: [
-                        {"role": "user", "content": queryContext}
-                    ],
-                });
-
-                searchContent = await performSearch(command, queryAI, commandContent, message);
-                messages.push({ role: "user", content: searchContent });
-            } catch (error) {
-                console.error("Search Error:", error);
-                await message.reply(`There was an error processing your search request.`);
-                return;
-            }
-        } else {
-            messages.push({ role: "user", content: processedInput });
-            if (imageDescriptions) {
-                messages.push({ role: "assistant", content: imageDescriptions });
-            }
-        }
-
         // Get the appropriate conversation history
         const conversationHistory = isDM ? 
             userConversations[message.author.id] : 
             guildConversations[guildId];
         
-        messages = [...conversationHistory, ...messages];
+        // Check if extended thinking is enabled for this user
+        const isExtendedThinking = userSettings[userId].extendedThinking;
+        const showThinkingProcess = userSettings[userId].showThinkingProcess;
+        const thinkingBudget = userSettings[userId].thinkingBudget;
+        
+        // Create messages array with conversation history
+        let messages = [...conversationHistory];
+        
+        // Add the current user message
+        messages.push({ role: "user", content: processedInput });
+        
+        // Add image descriptions if any
+        if (imageDescriptions) {
+            messages.push({ role: "assistant", content: imageDescriptions });
+        }
 
         console.log("Messages to be sent to API:", JSON.stringify(messages, null, 2));
 
@@ -618,8 +413,9 @@ client.on('messageCreate', async function(message) {
             const apiParams = {
                 model: AI_MODEL,
                 max_tokens: isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS,
-                system: config.systemMessage(command, message.author.username, isExtendedThinking),
+                system: config.systemMessage(message.author.username, isExtendedThinking),
                 messages: messages,
+                tools: TOOL_SCHEMAS
             };
             
             // Add thinking parameters if extended thinking is enabled
@@ -639,7 +435,134 @@ client.on('messageCreate', async function(message) {
             }
             
             // Make the API request
-            const response = await anthropic.messages.create(apiParams);
+            let response = await anthropic.messages.create(apiParams);
+            
+            // Add debug logging for initial response
+            console.log(`Initial response - content types: ${response.content.map(item => item.type).join(', ')}`);
+            console.log(`Has thinking content: ${response.content.some(item => item.type === 'thinking')}`);
+            if (response.content.some(item => item.type === 'thinking')) {
+                console.log(`Thinking item exists: ${!!response.content.find(item => item.type === 'thinking')}`);
+            }
+            
+            // Process any tool calls from Claude
+            let toolCallFound = response.content.some(item => item.type === 'tool_use');
+            
+            while (toolCallFound) {
+                console.log("\nClaude is requesting to use tools:");
+                const toolCalls = response.content.filter(item => item.type === 'tool_use');
+                
+                // Log the tool calls and send notifications
+                for (const call of toolCalls) {
+                    console.log(`- Tool: ${call.name}`);
+                    console.log(`  Input: ${JSON.stringify(call.input, null, 2)}`);
+                    
+                    // Send a notification message for each tool use
+                    let toolNotification = '';
+                    if (call.name === 'web_search') {
+                        toolNotification = `Using web search for: \`${call.input.query}\``;
+                    } else if (call.name === 'web_scrape') {
+                        toolNotification = `Using web scraper for: \`${call.input.url}\``;
+                    } else if (call.name === 'multi_scrape') {
+                        toolNotification = `Using multi-page scraper for \`${call.input.urls.length}\` URLs`;
+                    }
+                    
+                    if (toolNotification) {
+                        await message.channel.send(toolNotification);
+                    }
+                }
+
+                // Execute the tool calls
+                console.log("\nExecuting tool calls...");
+                let toolResults = [];
+                let toolFailures = [];
+                
+                try {
+                    toolResults = await executeToolCalls(toolCalls.map(call => ({
+                        id: call.id,
+                        name: call.name,
+                        input: call.input
+                    })));
+                    
+                    // Check for errors in tool results
+                    for (const result of toolResults) {
+                        const parsedOutput = JSON.parse(result.output);
+                        if (parsedOutput.error) {
+                            const toolCall = toolCalls.find(call => call.id === result.tool_call_id);
+                            const errorMsg = `Error with ${toolCall ? toolCall.name : 'unknown tool'}`;
+                            toolFailures.push(errorMsg);
+                            console.error(errorMsg);
+                        }
+                    }
+                } catch (error) {
+                    console.error("Failed to execute tool calls:", error);
+                    toolFailures.push(`Tool execution failed: ${error.message}`);
+                }
+                
+                // Send error messages to the user if any tools failed
+                if (toolFailures.length > 0) {
+                    for (const failure of toolFailures) {
+                        await message.channel.send(`⚠️ ${failure}`);
+                    }
+                    
+                    // If all tools failed and we have no results, add a default error result
+                    if (toolResults.length === 0) {
+                        toolResults = toolCalls.map(call => ({
+                            tool_call_id: call.id,
+                            output: JSON.stringify({
+                                error: "Tool execution failed",
+                                details: "The requested information could not be retrieved. This could be due to connectivity issues or the service being unavailable."
+                            })
+                        }));
+                    }
+                }
+
+                // Add the tool outputs to the messages
+                messages.push({
+                    role: 'assistant',
+                    content: response.content
+                });
+
+                // Add the tool results to the messages
+                messages.push({
+                    role: 'user',
+                    content: toolResults.map(result => ({
+                        type: 'tool_result',
+                        tool_use_id: result.tool_call_id,
+                        content: result.output
+                    }))
+                });
+
+                // Get Claude's response with the tool results
+                const apiParamsAfterTools = {
+                    model: AI_MODEL,
+                    max_tokens: isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS,
+                    system: config.systemMessage(message.author.username, isExtendedThinking) + (toolFailures.length > 0 ? 
+                        " NOTE: Some tools encountered errors when trying to access the web. Please acknowledge this in your response and try to answer the question with the information you have, or suggest alternative approaches if appropriate." : ""),
+                    messages: messages,
+                    tools: TOOL_SCHEMAS // Add tools to subsequent calls so Claude can continue using them
+                };
+                
+                // Add thinking parameters if extended thinking is enabled
+                if (isExtendedThinking) {
+                    apiParamsAfterTools.thinking = {
+                        type: "enabled",
+                        budget_tokens: thinkingBudget
+                    };
+                }
+                
+                // Make the API request
+                response = await anthropic.messages.create(apiParamsAfterTools);
+                
+                // Add debug logging for response after tools
+                console.log(`Response after tools - content types: ${response.content.map(item => item.type).join(', ')}`);
+                console.log(`Has thinking content: ${response.content.some(item => item.type === 'thinking')}`);
+                if (response.content.some(item => item.type === 'thinking')) {
+                    console.log(`Thinking item exists: ${!!response.content.find(item => item.type === 'thinking')}`);
+                }
+                
+                // Check if new tool calls were made
+                toolCallFound = response.content.some(item => item.type === 'tool_use');
+            }
             
             // Track token usage
             if (response.usage) {
@@ -691,14 +614,21 @@ client.on('messageCreate', async function(message) {
             let finalResponse = '';
             let thinkingContent = '';
             
-            // Check if the response has thinking content
-            if (response.content.length > 1 && response.content[0].type === 'thinking') {
-                thinkingContent = response.content[0].thinking;
-                finalResponse = response.content[1].text;
+            // Improved check for thinking content - handle different response formats
+            const hasThinkingContent = response.content.some(item => item.type === 'thinking');
+            const thinkingItem = response.content.find(item => item.type === 'thinking');
+            
+            if (hasThinkingContent && thinkingItem) {
+                thinkingContent = thinkingItem.thinking;
+                
+                // Get the text content from the response
+                const textContent = response.content.find(item => item.type === 'text');
+                finalResponse = textContent ? textContent.text : 'I encountered an issue processing your request. This could be due to an error with the tool calls or API limitations. Please try asking one question at a time or try again later.';
                 
                 // If extended thinking is enabled and show thinking process is enabled, show the thinking process
                 if (isExtendedThinking && showThinkingProcess) {
                     // Send the thinking process first
+                    console.log("Sending thinking process, length:", thinkingContent.length);
                     const thinkingParts = splitMessage(`**My thinking process:**\n\n${thinkingContent}`);
                     for (let i = 0; i < thinkingParts.length; i++) {
                         await message.channel.send(thinkingParts[i]);
@@ -745,7 +675,9 @@ client.on('messageCreate', async function(message) {
                 }
             } else {
                 // Standard response without thinking content
-                finalResponse = response.content[0].text;
+                const textContent = response.content.find(item => item.type === 'text');
+                finalResponse = textContent ? textContent.text : 'I encountered an issue processing your request. This could be due to an error with the tool calls or API limitations. Please try asking one question at a time or try again later.';
+                
                 const messageParts = splitMessage(finalResponse);
                 
                 for (let i = 0; i < messageParts.length; i++) {

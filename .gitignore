@@ -18,3 +18,7 @@ yarn-error.log*
 *.swo 
 
 README-deepsearch-new.md
+README-tools.md
+
+token_data.json
+claude-tools-example.js
