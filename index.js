@@ -134,53 +134,61 @@ const processImages = async (attachments, userId, guildId, input) => {
                 }
             };
 
-            const imageAI = await anthropic.messages.create({
-                model: AI_MODEL,
-                max_tokens: NORMAL_MAX_TOKENS,
-                system: `${config.systemMessage(userId, false)} Describe the image concisely and answer the user's question if provided.`,
-                messages: [
-                    ...conversationHistory,
-                    {
-                        role: "user",
-                        content: [
-                            imageContent,
-                            {
-                                type: "text",
-                                text: input || "What's in this image?"
-                            }
-                        ]
+            // If there's no input text and we just want to describe the image,
+            // use the simplified approach
+            if (!input || input.trim() === '') {
+                const imageAI = await anthropic.messages.create({
+                    model: AI_MODEL,
+                    max_tokens: NORMAL_MAX_TOKENS,
+                    system: `${config.systemMessage(userId, false)} Describe the image concisely and answer the user's question if provided.`,
+                    messages: [
+                        ...conversationHistory,
+                        {
+                            role: "user",
+                            content: [
+                                imageContent,
+                                {
+                                    type: "text",
+                                    text: input || "What's in this image?"
+                                }
+                            ]
+                        }
+                    ]
+                });
+
+                const imageDescription = imageAI.content[0].text;
+                imageDescriptions.push(imageDescription);
+
+                // Add image description to the appropriate conversation history
+                if (guildId) {
+                    if (!guildConversations[guildId]) {
+                        guildConversations[guildId] = [];
                     }
-                ]
-            });
-
-            const imageDescription = imageAI.content[0].text;
-            imageDescriptions.push(imageDescription);
-
-            // Add image description to the appropriate conversation history
-            if (guildId) {
-                if (!guildConversations[guildId]) {
-                    guildConversations[guildId] = [];
+                    guildConversations[guildId].push({
+                        role: "user",
+                        content: [{ type: "text", text: `[Image] ${input}` }]
+                    });
+                    guildConversations[guildId].push({
+                        role: "assistant",
+                        content: imageDescription
+                    });
+                } else {
+                    if (!userConversations[userId]) {
+                        userConversations[userId] = [];
+                    }
+                    userConversations[userId].push({
+                        role: "user",
+                        content: [{ type: "text", text: `[Image] ${input}` }]
+                    });
+                    userConversations[userId].push({
+                        role: "assistant",
+                        content: imageDescription
+                    });
                 }
-                guildConversations[guildId].push({
-                    role: "user",
-                    content: [{ type: "text", text: `[Image] ${input}` }]
-                });
-                guildConversations[guildId].push({
-                    role: "assistant",
-                    content: imageDescription
-                });
             } else {
-                if (!userConversations[userId]) {
-                    userConversations[userId] = [];
-                }
-                userConversations[userId].push({
-                    role: "user",
-                    content: [{ type: "text", text: `[Image] ${input}` }]
-                });
-                userConversations[userId].push({
-                    role: "assistant",
-                    content: imageDescription
-                });
+                // If there's text input with the image, just return the image content
+                // to be processed with tools if needed
+                return { imageContent, base64Image, contentType: attachment.contentType };
             }
         }
     }
@@ -357,26 +365,39 @@ client.on('messageCreate', async function(message) {
             return;
         }
 
+        let imageData = null;
         let imageDescriptions = '';
         if (message.attachments.size > 0) {
             try {
-                imageDescriptions = await processImages(message.attachments, message.author.id, guildId, fullInput);
-                console.log(`Images processed. Descriptions: ${imageDescriptions}`);
+                const result = await processImages(message.attachments, message.author.id, guildId, fullInput);
                 
-                // If there are only image attachments and no text, send the image descriptions and return
-                if (!fullInput && imageDescriptions) {
-                    const messageParts = splitMessage(imageDescriptions);
-                    for (let i = 0; i < messageParts.length; i++) {
-                        if (i === 0) {
-                            await message.reply({
-                                content: messageParts[i],
-                                allowedMentions: { repliedUser: true },
-                            });
-                        } else {
-                            await message.channel.send(messageParts[i]);
+                // Check if we received image content or descriptions
+                if (typeof result === 'object' && result.imageContent) {
+                    // We have image content to pass directly to Claude with the query
+                    imageData = result;
+                    console.log("Image prepared for direct processing with Claude");
+                } else {
+                    // We have image descriptions (for the simple case without tool use)
+                    imageDescriptions = result;
+                    console.log(`Images processed. Descriptions: ${imageDescriptions}`);
+                    
+                    // If there are only image attachments and no text, send the image descriptions and return
+                    if (!fullInput && imageDescriptions) {
+                        const messageParts = splitMessage(imageDescriptions);
+                        for (let i = 0; i < messageParts.length; i++) {
+                            if (i === 0) {
+                                await message.reply({
+                                    content: messageParts[i],
+                                    allowedMentions: { repliedUser: true },
+                                });
+                            } else {
+                                await message.channel.send(messageParts[i]);
+                            }
                         }
+                        
+                        // Update conversation history already happened in processImages
+                        return;
                     }
-                    return;
                 }
             } catch (error) {
                 console.error("Error processing images:", error);
@@ -398,14 +419,31 @@ client.on('messageCreate', async function(message) {
         // Create messages array with conversation history
         let messages = [...conversationHistory];
         
-        // Add the current user message
-        messages.push({ role: "user", content: processedInput });
-        
-        // Add image descriptions if any
-        if (imageDescriptions) {
-            messages.push({ role: "assistant", content: imageDescriptions });
+        // Add the current user message, including the image content if available
+        if (imageData) {
+            // If we have an image, create a multipart message with image and text
+            messages.push({
+                role: "user",
+                content: [
+                    imageData.imageContent,
+                    {
+                        type: "text",
+                        text: processedInput
+                    }
+                ]
+            });
+        } else {
+            // Regular text message
+            messages.push({ role: "user", content: processedInput });
+            
+            // Only add image descriptions to messages array if we haven't already processed them
+            // This prevents the duplicate image descriptions in the API call
+            if (imageDescriptions && fullInput.trim()) {
+                // Only add the image context if we have an actual text query with the image
+                messages.push({ role: "assistant", content: imageDescriptions });
+            }
         }
-
+        
         console.log("Messages to be sent to API:", JSON.stringify(messages, null, 2));
 
         try {
@@ -610,20 +648,61 @@ client.on('messageCreate', async function(message) {
                 await thinkingMessage.edit(`Done! Thinking completed in ${thinkingTimeInSeconds}s.`);
             }
 
+            // Enhanced debugging of the response content
+            console.log(`Response content types: ${response.content ? response.content.map(item => item.type).join(', ') : 'no content'}`);
+            console.log(`Response content length: ${response.content ? response.content.length : 0}`);
+            if (response.content && response.content.length > 0) {
+                for (let i = 0; i < response.content.length; i++) {
+                    console.log(`Item ${i} type: ${response.content[i].type}`);
+                    if (response.content[i].type === 'text') {
+                        console.log(`Text content length: ${response.content[i].text.length}`);
+                    }
+                }
+            } else {
+                console.log("WARNING: Empty response content array");
+            }
+
             // Process the response based on whether it contains thinking content
             let finalResponse = '';
             let thinkingContent = '';
             
+            // Handle case where response.content is empty or undefined
+            if (!response.content || response.content.length === 0) {
+                // Check if we just processed images that might already have descriptions
+                if (imageDescriptions) {
+                    // Use the image description as the final response
+                    finalResponse = imageDescriptions;
+                    console.log("Using image description as response since API returned empty content");
+                } else {
+                    finalResponse = "I received an empty response from the API. This could be due to a temporary issue. Please try your query again or simplify it.";
+                }
+            } else {
+                // Get the text content from the response
+                const textContent = response.content.find(item => item.type === 'text');
+                
+                // If no text content, create a fallback response about tool usage
+                if (!textContent || !textContent.text || textContent.text.trim() === '') {
+                    const toolCalls = response.content.filter(item => item.type === 'tool_use');
+                    if (toolCalls.length > 0) {
+                        finalResponse = "I've used my tools to gather information, but something went wrong with generating the final response. The data has been collected successfully, so please ask me to summarize what I found about your query.";
+                    } else if (imageDescriptions) {
+                        // Also check here if we have image descriptions available
+                        finalResponse = imageDescriptions;
+                        console.log("Using image description as response since text content is empty");
+                    } else {
+                        finalResponse = 'I encountered an issue processing your request. This could be due to an error with the API. Please try again with a simpler query.';
+                    }
+                } else {
+                    finalResponse = textContent.text;
+                }
+            }
+            
             // Improved check for thinking content - handle different response formats
-            const hasThinkingContent = response.content.some(item => item.type === 'thinking');
-            const thinkingItem = response.content.find(item => item.type === 'thinking');
+            const hasThinkingContent = response.content && response.content.some(item => item.type === 'thinking');
+            const thinkingItem = response.content && hasThinkingContent ? response.content.find(item => item.type === 'thinking') : null;
             
             if (hasThinkingContent && thinkingItem) {
                 thinkingContent = thinkingItem.thinking;
-                
-                // Get the text content from the response
-                const textContent = response.content.find(item => item.type === 'text');
-                finalResponse = textContent ? textContent.text : 'I encountered an issue processing your request. This could be due to an error with the tool calls or API limitations. Please try asking one question at a time or try again later.';
                 
                 // If extended thinking is enabled and show thinking process is enabled, show the thinking process
                 if (isExtendedThinking && showThinkingProcess) {
@@ -675,9 +754,6 @@ client.on('messageCreate', async function(message) {
                 }
             } else {
                 // Standard response without thinking content
-                const textContent = response.content.find(item => item.type === 'text');
-                finalResponse = textContent ? textContent.text : 'I encountered an issue processing your request. This could be due to an error with the tool calls or API limitations. Please try asking one question at a time or try again later.';
-                
                 const messageParts = splitMessage(finalResponse);
                 
                 for (let i = 0; i < messageParts.length; i++) {
@@ -701,13 +777,37 @@ client.on('messageCreate', async function(message) {
 
             // Update the appropriate conversation history
             if (isDM) {
-                userConversations[message.author.id].push({ role: "user", content: fullInput });
+                // Don't duplicate the user message if it already exists in the conversation history
+                if (userConversations[message.author.id].length === 0 || 
+                    userConversations[message.author.id][userConversations[message.author.id].length - 1].role !== "user") {
+                    // Special case for storing image + text in conversation history
+                    if (imageData) {
+                        userConversations[message.author.id].push({ 
+                            role: "user", 
+                            content: [{ type: "text", text: `[Image with query: ${fullInput}]` }]
+                        });
+                    } else {
+                        userConversations[message.author.id].push({ role: "user", content: fullInput });
+                    }
+                }
                 userConversations[message.author.id].push({ 
                     role: "assistant", 
                     content: finalResponse 
                 });
             } else {
-                guildConversations[guildId].push({ role: "user", content: processedInput });
+                // Don't duplicate the user message if it already exists in the conversation history
+                if (guildConversations[guildId].length === 0 || 
+                    guildConversations[guildId][guildConversations[guildId].length - 1].role !== "user") {
+                    // Special case for storing image + text in conversation history
+                    if (imageData) {
+                        guildConversations[guildId].push({ 
+                            role: "user", 
+                            content: [`[${message.author.username}]: [Image with query: ${fullInput}]`]
+                        });
+                    } else {
+                        guildConversations[guildId].push({ role: "user", content: processedInput });
+                    }
+                }
                 guildConversations[guildId].push({ 
                     role: "assistant", 
                     content: finalResponse 
