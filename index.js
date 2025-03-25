@@ -815,7 +815,12 @@ client.on('messageCreate', async function(message) {
             }
         } catch (error) {
             console.error("API Error:", error);
-            await message.reply(`There was an error processing your request.`);
+            // Check for overloaded error
+            if (error.error?.error?.type === 'overloaded_error') {
+                await message.reply("Sorry, Claude's servers are currently overloaded. Please try again in a few minutes. 🔄");
+            } else {
+                await message.reply(`There was an error processing your request.`);
+            }
         }
     } catch (err) {
         console.error("General Error:", err);
