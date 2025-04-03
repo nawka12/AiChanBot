@@ -1,5 +1,6 @@
 const { searchQuery } = require('./searchlogic.js');
 const { scrapeUrl, scrapeMultipleUrls } = require('./scraper.js');
+const { getTweets, getTweetByUrl, isTwitterUrl } = require('./nitter_tool.js');
 
 /**
  * Tools implementation for Claude API integration
@@ -26,7 +27,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: "web_scrape",
-    description: "Scrape content from a specific URL. One time use.",
+    description: "Scrape content from a specific URL. DO NOT USE FOR X/TWITTER LINKS. One time use.",
     input_schema: {
       type: "object",
       properties: {
@@ -40,7 +41,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: "multi_scrape",
-    description: "Scrape content from multiple URLs. One time use.",
+    description: "Scrape content from multiple URLs. DO NOT USE FOR X/TWITTER LINKS. One time use.",
     input_schema: {
       type: "object",
       properties: {
@@ -53,6 +54,38 @@ const TOOL_SCHEMAS = [
         }
       },
       required: ["urls"]
+    }
+  },
+  {
+    name: "nitter_tweets",
+    description: "Fetch recent tweets from a Twitter user via Nitter instances (does not require authentication). One time use.",
+    input_schema: {
+      type: "object",
+      properties: {
+        username: {
+          type: "string",
+          description: "Twitter username (with or without @)"
+        },
+        include_replies: {
+          type: "boolean",
+          description: "Whether to include replies by the user (default: false)"
+        }
+      },
+      required: ["username"]
+    }
+  },
+  {
+    name: "tweet_url_scrape",
+    description: "Scrape a specific tweet from Twitter/X via Nitter. Use this for direct tweet URLs instead of web_scrape. One time use.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "URL of the tweet (twitter.com or x.com)"
+        }
+      },
+      required: ["url"]
     }
   }
 ];
@@ -96,13 +129,51 @@ async function executeToolCalls(toolCalls) {
       } 
       else if (name === "web_scrape") {
         try {
-          // Execute single URL scrape
-          const scrapeData = await scrapeUrl(input.url);
-          result = {
-            url: input.url,
-            content: scrapeData.content || "No content found",
-            title: scrapeData.title || "Unknown title"
-          };
+          const url = input.url;
+          
+          // Check if the URL is a Twitter/X URL
+          if (isTwitterUrl(url)) {
+            console.log(`Detected Twitter/X URL, redirecting to tweet_url_scrape: ${url}`);
+            // Handle as a tweet URL scrape
+            const tweetData = await getTweetByUrl(url);
+            
+            if (tweetData.error) {
+              result = { 
+                error: tweetData.message,
+                url: url,
+                suggestion: "The Twitter/X content could not be retrieved via Nitter. You can try viewing it directly on Twitter."
+              };
+            } else {
+              // Format tweet data as a web scrape result
+              const tweet = tweetData.tweet;
+              const content = `Tweet by ${tweet.author} (@${tweet.username.replace('@', '')}):\n\n${tweet.text}\n\n` +
+                      `Posted: ${tweet.dateText}\n` +
+                      `Stats: ${tweet.stats.likes} likes, ${tweet.stats.retweets} retweets, ${tweet.stats.replies} replies\n` +
+                      (tweet.media.length > 0 ? `Media: ${tweet.media.length} items\n` : '') +
+                      (tweet.isReply ? `Reply to: ${tweet.replyTo}\n` : '') +
+                      (tweet.isQuote ? `Quote of: ${tweet.quotedFrom}\n` : '') +
+                      (tweet.conversationTweets && tweet.conversationTweets.length > 0 ? 
+                        `\nConversation (${tweet.conversationTweets.length} related tweets):\n` + 
+                        tweet.conversationTweets.map(t => `- ${t.username}: ${t.text}`).join('\n') : '');
+              
+              result = {
+                url: url,
+                content: content,
+                title: `Tweet by ${tweet.author}`,
+                tweet_data: tweet,
+                source: tweetData.source,
+                nitter_url: tweetData.url
+              };
+            }
+          } else {
+            // Execute regular URL scrape
+            const scrapeData = await scrapeUrl(url);
+            result = {
+              url: url,
+              content: scrapeData.content || "No content found",
+              title: scrapeData.title || "Unknown title"
+            };
+          }
         } catch (scrapeError) {
           console.error(`Scraping error for URL "${input.url}":`, scrapeError);
           result = { 
@@ -116,25 +187,74 @@ async function executeToolCalls(toolCalls) {
       else if (name === "multi_scrape") {
         try {
           // Execute multiple URL scrapes
-          const scrapeData = await scrapeMultipleUrls(input.urls);
+          const urls = input.urls;
+          
+          // Check each URL to see if it's a Twitter/X URL
+          const results = await Promise.all(
+            urls.map(async (url) => {
+              try {
+                if (isTwitterUrl(url)) {
+                  // Handle as a tweet URL scrape
+                  const tweetData = await getTweetByUrl(url);
+                  
+                  if (tweetData.error) {
+                    return {
+                      url,
+                      error: tweetData.message,
+                      content: null,
+                      title: "Twitter Content"
+                    };
+                  } else {
+                    // Format tweet data as a web scrape result
+                    const tweet = tweetData.tweet;
+                    const content = `Tweet by ${tweet.author} (@${tweet.username.replace('@', '')}):\n\n${tweet.text}\n\n` +
+                            `Posted: ${tweet.dateText}\n` +
+                            `Stats: ${tweet.stats.likes} likes, ${tweet.stats.retweets} retweets, ${tweet.stats.replies} replies\n` +
+                            (tweet.media.length > 0 ? `Media: ${tweet.media.length} items\n` : '') +
+                            (tweet.isReply ? `Reply to: ${tweet.replyTo}\n` : '') +
+                            (tweet.isQuote ? `Quote of: ${tweet.quotedFrom}\n` : '');
+                    
+                    return {
+                      url,
+                      content,
+                      title: `Tweet by ${tweet.author}`,
+                      tweet_data: tweet,
+                      source: tweetData.source,
+                      nitter_url: tweetData.url
+                    };
+                  }
+                } else {
+                  // Regular URL scraping
+                  const scrapeData = await scrapeUrl(url);
+                  return {
+                    url,
+                    content: scrapeData.content || "No content found",
+                    title: scrapeData.title || "Unknown title"
+                  };
+                }
+              } catch (error) {
+                return {
+                  url,
+                  error: `Failed to scrape: ${error.message}`,
+                  content: null,
+                  title: "Error"
+                };
+              }
+            })
+          );
           
           // Check if we got any successful scrapes
-          const successfulScrapes = scrapeData.filter(item => 
+          const successfulScrapes = results.filter(item => 
             !item.error && item.content && item.content.length > 100
           );
           
           if (successfulScrapes.length > 0) {
-            result = scrapeData.map(item => ({
-              url: item.url,
-              content: item.content || "No content found",
-              title: item.title || "Unknown title",
-              error: item.error || null
-            }));
+            result = results;
           } else {
             // All scrapes failed
             result = { 
               error: "All URL scraping attempts failed",
-              urls: input.urls,
+              urls,
               suggestion: "The websites might be unavailable or blocking access. You can try different websites or a general search query instead."
             };
           }
@@ -148,10 +268,89 @@ async function executeToolCalls(toolCalls) {
           };
         }
       }
+      else if (name === "nitter_tweets") {
+        try {
+          // Execute Nitter tweets fetch
+          const username = input.username;
+          const includeReplies = input.include_replies || false;
+          
+          console.log(`Fetching tweets for user @${username}, include replies: ${includeReplies}`);
+          
+          const tweetsData = await getTweets(username, includeReplies);
+          
+          if (tweetsData.error) {
+            result = { 
+              error: tweetsData.message,
+              username: tweetsData.username,
+              suggestion: "The Nitter service might be unavailable. You can try again later or consider using the Twitter web interface directly."
+            };
+          } else {
+            // Limit to 10 tweets to keep the response size reasonable
+            const limitedTweets = tweetsData.tweets.slice(0, 10);
+            
+            result = {
+              username: tweetsData.username,
+              tweets: limitedTweets,
+              count: limitedTweets.length,
+              total_count: tweetsData.count,
+              source: tweetsData.source,
+              includes_replies: tweetsData.includesReplies
+            };
+          }
+        } catch (nitterError) {
+          console.error(`Nitter error for username "${input.username}":`, nitterError);
+          result = { 
+            error: `Nitter tweets fetch failed: ${nitterError.message}`,
+            errorCode: nitterError.code || 'UNKNOWN',
+            username: input.username,
+            suggestion: "The Nitter service might be unavailable. You can try again later or consider using the Twitter web interface directly."
+          };
+        }
+      }
+      else if (name === "tweet_url_scrape") {
+        try {
+          // Execute tweet URL scrape
+          const url = input.url;
+          
+          if (!isTwitterUrl(url)) {
+            throw new Error("The provided URL is not a Twitter/X URL");
+          }
+          
+          console.log(`Scraping tweet from URL: ${url}`);
+          
+          const tweetData = await getTweetByUrl(url);
+          
+          if (tweetData.error) {
+            result = { 
+              error: tweetData.message,
+              url: url,
+              suggestion: "The Twitter/X content could not be retrieved via Nitter. You can try viewing it directly on Twitter."
+            };
+          } else {
+            // Extract tweet data
+            const tweet = tweetData.tweet;
+            
+            result = {
+              tweet: tweet,
+              url: url,
+              nitter_url: tweetData.url,
+              source: tweetData.source
+            };
+          }
+        } catch (tweetError) {
+          console.error(`Tweet scraping error for URL "${input.url}":`, tweetError);
+          result = { 
+            error: `Tweet scraping failed: ${tweetError.message}`,
+            errorCode: tweetError.code || 'UNKNOWN',
+            url: input.url,
+            suggestion: "The tweet might be unavailable or the URL is invalid. Please check the URL and try again."
+          };
+        }
+      }
       else {
         result = { 
           error: `Unknown tool: ${name}`,
-          suggestion: "Please use one of the available tools: web_search, web_scrape, or multi_scrape." 
+          suggestion: "Please use one of the available tools: web_search, web_scrape, multi_scrape, nitter_tweets, or tweet_url_scrape." 
         };
       }
     } catch (error) {
@@ -196,6 +395,21 @@ if (typeof scrapeMultipleUrls === 'undefined') {
       title: `Mock Page Title for ${url}`
     }));
   };
+}
+
+function parseNumber(text) {
+  if (!text || text.trim() === '') return 0;
+  text = text.trim();
+  
+  // Check if it's an abbreviated number
+  if (text.endsWith('k') || text.endsWith('K')) {
+    return Math.round(parseFloat(text.slice(0, -1)) * 1000);
+  }
+  if (text.endsWith('m') || text.endsWith('M')) {
+    return Math.round(parseFloat(text.slice(0, -1)) * 1000000);
+  }
+  
+  return parseInt(text, 10) || 0;
 }
 
 module.exports = {

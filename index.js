@@ -502,6 +502,11 @@ client.on('messageCreate', async function(message) {
                         toolNotification = `Using web scraper for: \`${call.input.url}\``;
                     } else if (call.name === 'multi_scrape') {
                         toolNotification = `Using multi-page scraper for \`${call.input.urls.length}\` URLs`;
+                    } else if (call.name === 'nitter_tweets') {
+                        const username = call.input.username.startsWith('@') ? call.input.username : `@${call.input.username}`;
+                        toolNotification = `Using nitter tweets tool for: \`${username}\``;
+                    } else if (call.name === 'tweet_url_scrape') {
+                        toolNotification = `Using tweet URL scraper for: \`${call.input.url}\``;
                     }
                     
                     if (toolNotification) {

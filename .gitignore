@@ -22,3 +22,11 @@ README-tools.md
 
 token_data.json
 claude-tools-example.js
+
+test_nitter.js
+test_tweet_url.js
+test_twitter_redirect.js
+tools-example.js
+nitter_test.js
+TWITTER-INTEGRATION.md
+test_number_parsing.js
