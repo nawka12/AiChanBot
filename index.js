@@ -675,8 +675,8 @@ client.on('messageCreate', async function(message) {
                 }
                 console.log(`Cost of this request: $${totalCost.toFixed(6)} ($${inputCost.toFixed(6)} for input, $${outputCost.toFixed(6)} for output)`);
                 console.log(`Total lifetime tokens: ${tokenTracking.lifetimeInputTokens.toLocaleString()} input, ${tokenTracking.lifetimeOutputTokens.toLocaleString()} output`);
-                console.log(`Total lifetime thinking tokens: ${tokenTracking.lifetimeThinkingTokens.toLocaleString()}`);
-                console.log(`Total lifetime tool use tokens: ${tokenTracking.lifetimeToolUseTokens.toLocaleString()}`);
+                console.log(`Total lifetime thinking tokens: ${(tokenTracking.lifetimeThinkingTokens || 0).toLocaleString()}`);
+                console.log(`Total lifetime tool use tokens: ${(tokenTracking.lifetimeToolUseTokens || 0).toLocaleString()}`);
                 
                 // Save token data after each update
                 saveTokenData();
@@ -1005,8 +1005,8 @@ client.on('interactionCreate', async interaction => {
                     { name: 'Token Statistics', value: 
                         `🔢 **Input**: ${tokenTracking.lifetimeInputTokens.toLocaleString()} tokens\n` +
                         `📤 **Output**: ${tokenTracking.lifetimeOutputTokens.toLocaleString()} tokens\n` +
-                        `🧠 **Thinking**: ${tokenTracking.lifetimeThinkingTokens.toLocaleString()} tokens\n` +
-                        `🛠️ **Tool Use**: ${tokenTracking.lifetimeToolUseTokens.toLocaleString()} tokens\n` +
+                        `🧠 **Thinking**: ${(tokenTracking.lifetimeThinkingTokens || 0).toLocaleString()} tokens\n` +
+                        `🛠️ **Tool Use**: ${(tokenTracking.lifetimeToolUseTokens || 0).toLocaleString()} tokens\n` +
                         `📊 **Avg Input/Message**: ${avgInputTokens} tokens\n` +
                         `📈 **Avg Output/Message**: ${avgOutputTokens} tokens\n` +
                         `💰 **Total Cost**: $${costs.totalCost} ($${costs.inputCost} input, $${costs.outputCost} output)\n` +
@@ -1101,7 +1101,7 @@ const calculateCosts = () => {
         inputCost: inputCost.toFixed(4),
         outputCost: outputCost.toFixed(4),
         totalCost: (inputCost + outputCost).toFixed(4),
-        thinkingTokens: tokenTracking.lifetimeThinkingTokens,
-        toolUseTokens: tokenTracking.lifetimeToolUseTokens
+        thinkingTokens: tokenTracking.lifetimeThinkingTokens || 0,
+        toolUseTokens: tokenTracking.lifetimeToolUseTokens || 0
     };
 };
