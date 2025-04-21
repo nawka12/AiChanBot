@@ -46,6 +46,8 @@ let tokenTracking = {
     lifetimeOutputTokens: 0,
     lifetimeCacheCreationInputTokens: 0,
     lifetimeCacheReadInputTokens: 0,
+    lifetimeThinkingTokens: 0, // New field to track thinking tokens separately
+    lifetimeToolUseTokens: 0,  // New field to track tool use tokens separately
     cacheHits: 0,
     cacheMisses: 0,
     trackingSince: new Date().toISOString() // Add tracking start date
@@ -612,8 +614,35 @@ client.on('messageCreate', async function(message) {
                 const previousInputTokens = tokenTracking.lifetimeInputTokens;
                 const previousOutputTokens = tokenTracking.lifetimeOutputTokens;
                 
+                // Track standard input/output tokens
                 tokenTracking.lifetimeInputTokens += response.usage.input_tokens || 0;
                 tokenTracking.lifetimeOutputTokens += response.usage.output_tokens || 0;
+                
+                // Track extended thinking tokens if present in the response
+                let thinkingTokenCount = 0;
+                if (isExtendedThinking && response.content.some(item => item.type === 'thinking')) {
+                    const thinkingItem = response.content.find(item => item.type === 'thinking');
+                    if (thinkingItem && thinkingItem.thinking) {
+                        // Note: This is an estimate as Anthropic doesn't provide exact thinking token count
+                        // Current assistant turn thinking DOES count toward input tokens
+                        thinkingTokenCount = Math.ceil(thinkingItem.thinking.length / 4); // Rough estimate
+                        tokenTracking.lifetimeThinkingTokens += thinkingTokenCount;
+                        console.log(`Estimated thinking tokens: ${thinkingTokenCount}`);
+                    }
+                }
+                
+                // Track tool use tokens if present in the response
+                let toolUseTokenCount = 0;
+                const toolUseItems = response.content.filter(item => item.type === 'tool_use');
+                if (toolUseItems.length > 0) {
+                    // Rough estimate of tool use tokens - adjust according to actual usage patterns
+                    toolUseTokenCount = toolUseItems.reduce((acc, item) => {
+                        // Estimate tokens for each tool call based on parameters
+                        return acc + Math.ceil(JSON.stringify(item).length / 4);
+                    }, 0);
+                    tokenTracking.lifetimeToolUseTokens += toolUseTokenCount;
+                    console.log(`Estimated tool use tokens: ${toolUseTokenCount}`);
+                }
                 
                 // Track cache usage if available
                 let cacheInfo = '';
@@ -638,8 +667,16 @@ client.on('messageCreate', async function(message) {
                 const totalCost = inputCost + outputCost;
                 
                 console.log(`Token usage - Input: ${response.usage.input_tokens}, Output: ${response.usage.output_tokens}${cacheInfo}`);
+                if (thinkingTokenCount > 0) {
+                    console.log(`Thinking tokens: ${thinkingTokenCount} (included in input tokens)`);
+                }
+                if (toolUseTokenCount > 0) {
+                    console.log(`Tool use tokens: ${toolUseTokenCount} (included in input tokens)`);
+                }
                 console.log(`Cost of this request: $${totalCost.toFixed(6)} ($${inputCost.toFixed(6)} for input, $${outputCost.toFixed(6)} for output)`);
                 console.log(`Total lifetime tokens: ${tokenTracking.lifetimeInputTokens.toLocaleString()} input, ${tokenTracking.lifetimeOutputTokens.toLocaleString()} output`);
+                console.log(`Total lifetime thinking tokens: ${tokenTracking.lifetimeThinkingTokens.toLocaleString()}`);
+                console.log(`Total lifetime tool use tokens: ${tokenTracking.lifetimeToolUseTokens.toLocaleString()}`);
                 
                 // Save token data after each update
                 saveTokenData();
@@ -839,6 +876,8 @@ const resetTokenStats = () => {
         lifetimeOutputTokens: 0,
         lifetimeCacheCreationInputTokens: 0,
         lifetimeCacheReadInputTokens: 0,
+        lifetimeThinkingTokens: 0, // Reset thinking tokens
+        lifetimeToolUseTokens: 0,  // Reset tool use tokens
         cacheHits: 0,
         cacheMisses: 0,
         trackingSince: new Date().toISOString() // Update to current time when reset
@@ -960,35 +999,21 @@ client.on('interactionCreate', async interaction => {
                     { name: 'Thinking Budget', value: userSettings[user.id].thinkingBudget.toString(), inline: true }
                 );
                 
-            // Only show token usage to bot owner
+            // Add token usage fields if the user is the bot creator
             if (isBotOwner) {
                 statusEmbed.addFields(
-                    { name: 'Tracking Since', value: formatTrackingDate(tokenTracking.trackingSince), inline: false },
-                    { name: 'Lifetime Input Tokens', value: tokenTracking.lifetimeInputTokens.toLocaleString(), inline: true },
-                    { name: 'Lifetime Output Tokens', value: tokenTracking.lifetimeOutputTokens.toLocaleString(), inline: true },
-                    { name: 'Total Tokens', value: (tokenTracking.lifetimeInputTokens + tokenTracking.lifetimeOutputTokens).toLocaleString(), inline: true },
-                    { name: 'Avg. Input / Message', value: avgInputTokens, inline: true },
-                    { name: 'Avg. Output / Message', value: avgOutputTokens, inline: true },
-                    { name: 'Input Cost', value: `$${costs.inputCost} ($3/M)`, inline: true },
-                    { name: 'Output Cost', value: `$${costs.outputCost} ($15/M)`, inline: true },
-                    { name: 'Total Cost', value: `$${costs.totalCost}`, inline: true },
-                    { name: 'Total Messages', value: totalMessages.toString(), inline: true }
+                    { name: 'Token Statistics', value: 
+                        `🔢 **Input**: ${tokenTracking.lifetimeInputTokens.toLocaleString()} tokens\n` +
+                        `📤 **Output**: ${tokenTracking.lifetimeOutputTokens.toLocaleString()} tokens\n` +
+                        `🧠 **Thinking**: ${tokenTracking.lifetimeThinkingTokens.toLocaleString()} tokens\n` +
+                        `🛠️ **Tool Use**: ${tokenTracking.lifetimeToolUseTokens.toLocaleString()} tokens\n` +
+                        `📊 **Avg Input/Message**: ${avgInputTokens} tokens\n` +
+                        `📈 **Avg Output/Message**: ${avgOutputTokens} tokens\n` +
+                        `💰 **Total Cost**: $${costs.totalCost} ($${costs.inputCost} input, $${costs.outputCost} output)\n` +
+                        `🕒 **Tracking Since**: ${new Date(tokenTracking.trackingSince).toLocaleString()}\n` +
+                        `🔄 **Cache Performance**: ${tokenTracking.cacheHits} hits, ${tokenTracking.cacheMisses} misses`
+                    }
                 );
-                
-                // Add cache information if there are any cache hits or misses
-                if (tokenTracking.cacheHits > 0 || tokenTracking.cacheMisses > 0) {
-                    const cacheHitRate = (tokenTracking.cacheHits / (tokenTracking.cacheHits + tokenTracking.cacheMisses) * 100).toFixed(2);
-                    const cacheSavings = (tokenTracking.lifetimeCacheReadInputTokens * INPUT_TOKEN_COST_PER_MILLION / 1000000).toFixed(4);
-                    
-                    statusEmbed.addFields(
-                        { name: 'Cache Hits', value: tokenTracking.cacheHits.toString(), inline: true },
-                        { name: 'Cache Misses', value: tokenTracking.cacheMisses.toString(), inline: true },
-                        { name: 'Cache Hit Rate', value: `${cacheHitRate}%`, inline: true },
-                        { name: 'Cache Creation Tokens', value: tokenTracking.lifetimeCacheCreationInputTokens.toLocaleString(), inline: true },
-                        { name: 'Cache Read Tokens', value: tokenTracking.lifetimeCacheReadInputTokens.toLocaleString(), inline: true },
-                        { name: 'Est. Cache Savings', value: `$${cacheSavings}`, inline: true }
-                    );
-                }
             } else {
                 // For regular users, just mention that usage is being tracked
                 statusEmbed.addFields(
@@ -1075,6 +1100,8 @@ const calculateCosts = () => {
     return {
         inputCost: inputCost.toFixed(4),
         outputCost: outputCost.toFixed(4),
-        totalCost: (inputCost + outputCost).toFixed(4)
+        totalCost: (inputCost + outputCost).toFixed(4),
+        thinkingTokens: tokenTracking.lifetimeThinkingTokens,
+        toolUseTokens: tokenTracking.lifetimeToolUseTokens
     };
 };
