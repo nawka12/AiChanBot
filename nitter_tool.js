@@ -76,7 +76,7 @@ const corsProxies = [
  * Nitter instances to try in order
  */
 const NITTER_INSTANCES = [
-    'https://nitter.moonaroh.com',
+    'https://fufufafa.moonaroh.com',
     'https://nitter.privacydev.net',
     'https://nitter.1d4.us',
     'https://nitter.kavin.rocks',
