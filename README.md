@@ -11,8 +11,19 @@ Dependencies:
 - cheerio
 - node-fetch
 
-Don't forget to grab your own Anthropic key, and your Discord bot key and put it in `.env` file.
-For easy setup, set the bot permission as `Administrator` in the Discord Developer Portal. (It's safe, supposedly).
+## Environment Configuration
+
+Create a `.env` file in the root directory with the following variables:
+
+```
+DISCORD_TOKEN=your_discord_bot_token
+ANTHROPIC_API_KEY=your_anthropic_api_key
+BOT_CREATOR_ID=your_discord_user_id
+```
+
+- `DISCORD_TOKEN`: Your Discord bot token from the Discord Developer Portal
+- `ANTHROPIC_API_KEY`: Your Anthropic API key for Claude
+- `BOT_CREATOR_ID`: (Optional) Your Discord user ID for admin features. To get this, enable Developer Mode in Discord (Settings > Advanced > Developer Mode), then right-click your username and select "Copy ID"
 
 ## Installation
 
