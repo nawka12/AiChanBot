@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Constants
-const AI_MODEL = 'claude-3-7-sonnet-latest';
+const AI_MODEL = 'claude-sonnet-4-20250514';
 
 // Bot creator identification (using Discord user ID instead of username for security)
 // Add BOT_CREATOR_ID=your_discord_user_id to your .env file
