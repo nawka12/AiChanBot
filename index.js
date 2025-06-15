@@ -9,7 +9,20 @@ const fs = require('fs');
 const path = require('path');
 
 // Constants
-const AI_MODEL = 'claude-sonnet-4-20250514';
+const SONNET_MODEL = 'claude-sonnet-4-20250514';
+const HAIKU_MODEL = 'claude-3-5-haiku-20241022'; // As requested by user
+const COMPLEXITY_CHECK_MODEL = 'claude-3-5-haiku-20241022'; // Use a known fast model for complexity check
+
+const MODEL_COSTS = {
+    [SONNET_MODEL]: {
+        input: 3, // per million tokens
+        output: 15
+    },
+    [HAIKU_MODEL]: {
+        input: 0.80, // per million tokens
+        output: 4.0
+    }
+};
 
 // Bot creator identification (using Discord user ID instead of username for security)
 // Add BOT_CREATOR_ID=your_discord_user_id to your .env file
@@ -42,8 +55,10 @@ const TOKEN_DATA_FILE = path.join(__dirname, 'token_data.json');
 
 // Add token tracking variables
 let tokenTracking = {
-    lifetimeInputTokens: 0,
-    lifetimeOutputTokens: 0,
+    modelUsage: {
+        [SONNET_MODEL]: { input: 0, output: 0 },
+        [HAIKU_MODEL]: { input: 0, output: 0 }
+    },
     lifetimeCacheCreationInputTokens: 0,
     lifetimeCacheReadInputTokens: 0,
     lifetimeThinkingTokens: 0, // New field to track thinking tokens separately
@@ -52,19 +67,6 @@ let tokenTracking = {
     cacheMisses: 0,
     trackingSince: new Date().toISOString() // Add tracking start date
 };
-
-// Load token tracking data if it exists
-try {
-    if (fs.existsSync(TOKEN_DATA_FILE)) {
-        const data = fs.readFileSync(TOKEN_DATA_FILE, 'utf8');
-        tokenTracking = JSON.parse(data);
-        console.log('Loaded token tracking data from file');
-    } else {
-        console.log('No token tracking data file found, starting with zero counts');
-    }
-} catch (error) {
-    console.error('Error loading token tracking data:', error);
-}
 
 // Function to save token tracking data
 const saveTokenData = () => {
@@ -76,9 +78,53 @@ const saveTokenData = () => {
     }
 };
 
+// Load token tracking data if it exists
+try {
+    if (fs.existsSync(TOKEN_DATA_FILE)) {
+        const data = fs.readFileSync(TOKEN_DATA_FILE, 'utf8');
+        const loadedData = JSON.parse(data);
+
+        // --- MIGRATION LOGIC from old format ---
+        if (loadedData.lifetimeInputTokens || loadedData.lifetimeOutputTokens) {
+            console.log('Migrating old token data format...');
+            tokenTracking.modelUsage = {
+                [SONNET_MODEL]: {
+                    input: loadedData.lifetimeInputTokens || 0,
+                    output: loadedData.lifetimeOutputTokens || 0
+                },
+                [HAIKU_MODEL]: { input: 0, output: 0 }
+            };
+
+            // Copy other fields
+            tokenTracking.lifetimeCacheCreationInputTokens = loadedData.lifetimeCacheCreationInputTokens || 0;
+            tokenTracking.lifetimeCacheReadInputTokens = loadedData.lifetimeCacheReadInputTokens || 0;
+            tokenTracking.lifetimeThinkingTokens = loadedData.lifetimeThinkingTokens || 0;
+            tokenTracking.lifetimeToolUseTokens = loadedData.lifetimeToolUseTokens || 0;
+            tokenTracking.cacheHits = loadedData.cacheHits || 0;
+            tokenTracking.cacheMisses = loadedData.cacheMisses || 0;
+            tokenTracking.trackingSince = loadedData.trackingSince || new Date().toISOString();
+            
+            console.log('Migration complete. Saving in new format.');
+            saveTokenData(); // Save in new format right away
+        } else {
+            tokenTracking = loadedData;
+            // Ensure all models are initialized in the structure
+            if (!tokenTracking.modelUsage) tokenTracking.modelUsage = {};
+            if (!tokenTracking.modelUsage[SONNET_MODEL]) tokenTracking.modelUsage[SONNET_MODEL] = { input: 0, output: 0 };
+            if (!tokenTracking.modelUsage[HAIKU_MODEL]) tokenTracking.modelUsage[HAIKU_MODEL] = { input: 0, output: 0 };
+        }
+        console.log('Loaded token tracking data from file');
+    } else {
+        console.log('No token tracking data file found, starting with fresh counts');
+    }
+} catch (error) {
+    console.error('Error loading token tracking data:', error);
+}
+
 // Token cost constants (per million tokens)
-const INPUT_TOKEN_COST_PER_MILLION = 3;
-const OUTPUT_TOKEN_COST_PER_MILLION = 15;
+// DEPRECATED - Now using MODEL_COSTS object
+// const INPUT_TOKEN_COST_PER_MILLION = 3;
+// const OUTPUT_TOKEN_COST_PER_MILLION = 15;
 
 // Configuration
 const config = {
@@ -106,6 +152,42 @@ const client = new Client({
 const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
 });
+
+const getPromptComplexity = async (prompt) => {
+    try {
+        const response = await anthropic.messages.create({
+            model: COMPLEXITY_CHECK_MODEL,
+            max_tokens: 10,
+            system: `You are a prompt complexity analyzer. Your task is to classify the user's prompt into one of three categories: 'simple', 'complex', or 'very_complex'.
+- 'simple': A straightforward question, a simple request, a greeting, or a short phrase that can be answered without deep reasoning or multiple steps. Examples: "hello", "what's the weather?", "tell me a joke".
+- 'complex': A prompt that requires some reasoning, data retrieval (like web search), or a multi-part answer. It's not a simple lookup. Examples: "summarize this article", "what are the main differences between Python and JavaScript?", "write a short story about a robot".
+- 'very_complex': A prompt that requires deep, step-by-step reasoning, planning, code generation, or analysis of a complex topic. This often involves a chain of thought. Examples: "develop a business plan for a new tech startup", "write a detailed technical report on quantum computing", "act as a travel agent and plan a 2-week itinerary for Japan".
+Respond with ONLY one of the three category names and nothing else.`,
+            messages: [{ role: 'user', content: prompt }]
+        });
+        const complexity = response.content[0].text.trim().toLowerCase();
+        
+        // Track token usage for the complexity check itself
+        if (response.usage && tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL]) {
+            const inputTokens = response.usage.input_tokens || 0;
+            const outputTokens = response.usage.output_tokens || 0;
+            tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL].input += inputTokens;
+            tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL].output += outputTokens;
+            console.log(`Complexity check (${COMPLEXITY_CHECK_MODEL}) usage: ${inputTokens} input, ${outputTokens} output tokens.`);
+            saveTokenData(); // Save data after tracking
+        }
+
+        if (['simple', 'complex', 'very_complex'].includes(complexity)) {
+            console.log(`Prompt complexity assessed as: ${complexity}`);
+            return complexity;
+        }
+        console.warn(`Unexpected complexity assessment: ${complexity}. Defaulting to 'simple'.`);
+        return 'simple'; // Default to simple if the model returns something unexpected
+    } catch (error) {
+        console.error('Error assessing prompt complexity:', error);
+        return 'simple'; // Default to simple on error
+    }
+};
 
 // State management
 const userConversations = {}; // For DM conversations
@@ -140,7 +222,7 @@ const processImages = async (attachments, userId, guildId, input) => {
             // use the simplified approach
             if (!input || input.trim() === '') {
                 const imageAI = await anthropic.messages.create({
-                    model: AI_MODEL,
+                    model: HAIKU_MODEL,
                     max_tokens: NORMAL_MAX_TOKENS,
                     system: `${config.systemMessage(userId, false)} Describe the image concisely and answer the user's question if provided.`,
                     messages: [
@@ -224,19 +306,8 @@ const splitMessage = (content) => {
 // Define slash commands
 const commands = [
     new SlashCommandBuilder()
-        .setName('thinking')
-        .setDescription('Toggle thinking mode on or off')
-        .addStringOption(option => 
-            option.setName('mode')
-                .setDescription('Enable or disable thinking mode')
-                .setRequired(true)
-                .addChoices(
-                    { name: 'On', value: 'on' },
-                    { name: 'Off', value: 'off' }
-                )),
-    new SlashCommandBuilder()
         .setName('thinking_process')
-        .setDescription('Toggle whether to show the thinking process')
+        .setDescription('Toggle whether to show the detailed thinking process.')
         .addStringOption(option => 
             option.setName('mode')
                 .setDescription('Show or hide the thinking process')
@@ -328,12 +399,45 @@ client.on('messageCreate', async function(message) {
 
         const isDM = message.channel.type === 1;
         const guildId = isDM ? null : message.guild.id;
+
+        // Handle reset command before complexity check
+        if (input.toLowerCase() === 'reset') {
+            if (isDM) {
+                if (userConversations[message.author.id]) {
+                    userConversations[message.author.id] = [];
+                }
+                await message.reply("Ai-chan's personal conversations with you have been reset.");
+            } else {
+                if (guildConversations[guildId]) {
+                    guildConversations[guildId] = [];
+                }
+                await message.reply("Ai-chan's server conversations have been reset.");
+            }
+            return;
+        }
+
+        // New logic: Determine prompt complexity to select model
+        const complexity = await getPromptComplexity(fullInput);
+        let selectedModel = HAIKU_MODEL;
+        let forceExtendedThinking = false;
+        
+        switch (complexity) {
+            case 'complex':
+                selectedModel = SONNET_MODEL;
+                await message.channel.send(`> 🔍 This seems a bit complex. Switching to my more powerful Sonnet model to give you the best possible answer.`);
+                break;
+            case 'very_complex':
+                selectedModel = SONNET_MODEL;
+                forceExtendedThinking = true;
+                await message.channel.send(`> 🧠 This requires deep thought. Engaging my powerful Sonnet model and enabling thinking mode for a thorough analysis.`);
+                break;
+        }
+
         const userId = message.author.id;
 
         // Initialize user settings if they don't exist
         if (!userSettings[userId]) {
             userSettings[userId] = {
-                extendedThinking: false,
                 showThinkingProcess: false,
                 thinkingBudget: DEFAULT_THINKING_BUDGET
             };
@@ -353,18 +457,6 @@ client.on('messageCreate', async function(message) {
             if (!guildConversations[guildId]) {
                 guildConversations[guildId] = [];
             }
-        }
-
-        // Handle reset command
-        if (input.toLowerCase() === 'reset') {
-            if (isDM) {
-                userConversations[message.author.id] = [];
-                await message.reply("Ai-chan's personal conversations with you have been reset.");
-            } else {
-                guildConversations[guildId] = [];
-                await message.reply("Ai-chan's server conversations have been reset.");
-            }
-            return;
         }
 
         let imageData = null;
@@ -414,7 +506,7 @@ client.on('messageCreate', async function(message) {
             guildConversations[guildId];
         
         // Check if extended thinking is enabled for this user
-        const isExtendedThinking = userSettings[userId].extendedThinking;
+        const isExtendedThinking = forceExtendedThinking;
         const showThinkingProcess = userSettings[userId].showThinkingProcess;
         const thinkingBudget = userSettings[userId].thinkingBudget;
         
@@ -451,7 +543,7 @@ client.on('messageCreate', async function(message) {
         try {
             // Create API request parameters
             const apiParams = {
-                model: AI_MODEL,
+                model: selectedModel,
                 max_tokens: isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS,
                 system: config.systemMessage(message.author.username, isExtendedThinking),
                 messages: messages,
@@ -579,7 +671,7 @@ client.on('messageCreate', async function(message) {
 
                 // Get Claude's response with the tool results
                 const apiParamsAfterTools = {
-                    model: AI_MODEL,
+                    model: selectedModel,
                     max_tokens: isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS,
                     system: config.systemMessage(message.author.username, isExtendedThinking) + (toolFailures.length > 0 ? 
                         " NOTE: Some tools encountered errors when trying to access the web. Please acknowledge this in your response and try to answer the question with the information you have, or suggest alternative approaches if appropriate." : ""),
@@ -611,13 +703,16 @@ client.on('messageCreate', async function(message) {
             
             // Track token usage
             if (response.usage) {
-                const previousInputTokens = tokenTracking.lifetimeInputTokens;
-                const previousOutputTokens = tokenTracking.lifetimeOutputTokens;
-                
-                // Track standard input/output tokens
-                tokenTracking.lifetimeInputTokens += response.usage.input_tokens || 0;
-                tokenTracking.lifetimeOutputTokens += response.usage.output_tokens || 0;
-                
+                const inputTokens = response.usage.input_tokens || 0;
+                const outputTokens = response.usage.output_tokens || 0;
+
+                // Track standard input/output tokens for the selected model
+                if (!tokenTracking.modelUsage[selectedModel]) {
+                    tokenTracking.modelUsage[selectedModel] = { input: 0, output: 0 };
+                }
+                tokenTracking.modelUsage[selectedModel].input += inputTokens;
+                tokenTracking.modelUsage[selectedModel].output += outputTokens;
+
                 // Track extended thinking tokens if present in the response
                 let thinkingTokenCount = 0;
                 if (isExtendedThinking && response.content.some(item => item.type === 'thinking')) {
@@ -657,16 +752,13 @@ client.on('messageCreate', async function(message) {
                     cacheInfo = `, Cache: HIT (${response.usage.cache_read_input_tokens} tokens)`;
                 }
                 
-                // Calculate token increase
-                const inputIncrease = tokenTracking.lifetimeInputTokens - previousInputTokens;
-                const outputIncrease = tokenTracking.lifetimeOutputTokens - previousOutputTokens;
-                
-                // Calculate costs
-                const inputCost = (inputIncrease / 1000000) * INPUT_TOKEN_COST_PER_MILLION;
-                const outputCost = (outputIncrease / 1000000) * OUTPUT_TOKEN_COST_PER_MILLION;
+                // Calculate costs for this specific request
+                const modelCosts = MODEL_COSTS[selectedModel] || { input: 0, output: 0 };
+                const inputCost = (inputTokens / 1000000) * modelCosts.input;
+                const outputCost = (outputTokens / 1000000) * modelCosts.output;
                 const totalCost = inputCost + outputCost;
                 
-                console.log(`Token usage - Input: ${response.usage.input_tokens}, Output: ${response.usage.output_tokens}${cacheInfo}`);
+                console.log(`Token usage for ${selectedModel} - Input: ${inputTokens}, Output: ${outputTokens}${cacheInfo}`);
                 if (thinkingTokenCount > 0) {
                     console.log(`Thinking tokens: ${thinkingTokenCount} (included in input tokens)`);
                 }
@@ -674,7 +766,10 @@ client.on('messageCreate', async function(message) {
                     console.log(`Tool use tokens: ${toolUseTokenCount} (included in input tokens)`);
                 }
                 console.log(`Cost of this request: $${totalCost.toFixed(6)} ($${inputCost.toFixed(6)} for input, $${outputCost.toFixed(6)} for output)`);
-                console.log(`Total lifetime tokens: ${tokenTracking.lifetimeInputTokens.toLocaleString()} input, ${tokenTracking.lifetimeOutputTokens.toLocaleString()} output`);
+
+                const totalLifetimeInput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.input, 0);
+                const totalLifetimeOutput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.output, 0);
+                console.log(`Total lifetime tokens: ${totalLifetimeInput.toLocaleString()} input, ${totalLifetimeOutput.toLocaleString()} output`);
                 console.log(`Total lifetime thinking tokens: ${(tokenTracking.lifetimeThinkingTokens || 0).toLocaleString()}`);
                 console.log(`Total lifetime tool use tokens: ${(tokenTracking.lifetimeToolUseTokens || 0).toLocaleString()}`);
                 
@@ -872,8 +967,10 @@ client.on('messageCreate', async function(message) {
 // Function to reset token statistics
 const resetTokenStats = () => {
     tokenTracking = {
-        lifetimeInputTokens: 0,
-        lifetimeOutputTokens: 0,
+        modelUsage: {
+            [SONNET_MODEL]: { input: 0, output: 0 },
+            [HAIKU_MODEL]: { input: 0, output: 0 }
+        },
         lifetimeCacheCreationInputTokens: 0,
         lifetimeCacheReadInputTokens: 0,
         lifetimeThinkingTokens: 0, // Reset thinking tokens
@@ -900,21 +997,13 @@ client.on('interactionCreate', async interaction => {
     // Initialize user settings if they don't exist
     if (!userSettings[user.id]) {
         userSettings[user.id] = {
-            extendedThinking: false,
             showThinkingProcess: false,
             thinkingBudget: DEFAULT_THINKING_BUDGET
         };
     }
     
     try {
-        if (commandName === 'thinking') {
-            const mode = options.getString('mode');
-            userSettings[user.id].extendedThinking = mode === 'on';
-            await interaction.reply({
-                content: `Thinking mode is now ${mode === 'on' ? 'ON' : 'OFF'}.`,
-                ephemeral: true
-            });
-        } else if (commandName === 'thinking_process') {
+        if (commandName === 'thinking_process') {
             const mode = options.getString('mode');
             userSettings[user.id].showThinkingProcess = mode === 'on';
             await interaction.reply({
@@ -962,7 +1051,9 @@ client.on('interactionCreate', async interaction => {
                 return;
             }
             
-            console.log(`Token statistics reset by ${user.username} (${user.id}). Previous data: ${tokenTracking.lifetimeInputTokens.toLocaleString()} input tokens, ${tokenTracking.lifetimeOutputTokens.toLocaleString()} output tokens since ${formatTrackingDate(tokenTracking.trackingSince)}`);
+            const totalLifetimeInput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.input, 0);
+            const totalLifetimeOutput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.output, 0);
+            console.log(`Token statistics reset by ${user.username} (${user.id}). Previous data: ${totalLifetimeInput.toLocaleString()} input tokens, ${totalLifetimeOutput.toLocaleString()} output tokens since ${formatTrackingDate(tokenTracking.trackingSince)}`);
             
             resetTokenStats();
             await interaction.reply({
@@ -978,8 +1069,11 @@ client.on('interactionCreate', async interaction => {
                 Math.max(1, Object.values(userConversations).reduce((sum, conv) => sum + Math.floor(conv.length / 2), 0) + 
                Object.values(guildConversations).reduce((sum, conv) => sum + Math.floor(conv.length / 2), 0));
                        
-            const avgInputTokens = (tokenTracking.lifetimeInputTokens / totalMessages).toFixed(0);
-            const avgOutputTokens = (tokenTracking.lifetimeOutputTokens / totalMessages).toFixed(0);
+            const totalLifetimeInput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.input, 0);
+            const totalLifetimeOutput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.output, 0);
+            
+            const avgInputTokens = (totalLifetimeInput / totalMessages).toFixed(0);
+            const avgOutputTokens = (totalLifetimeOutput / totalMessages).toFixed(0);
             
             // Check if the user is the bot creator to show more detailed info
             const isBotOwner = isBotCreator(user.id);
@@ -991,20 +1085,24 @@ client.on('interactionCreate', async interaction => {
                 .setDescription(`Current configuration and status information${isBotOwner ? ' (Owner View)' : ''}`)
                 .setThumbnail(client.user.displayAvatarURL())
                 .addFields(
-                    { name: 'AI Model', value: AI_MODEL, inline: true },
+                    { name: 'AI Models', value: `Default: \`${HAIKU_MODEL}\`\nComplex: \`${SONNET_MODEL}\``, inline: false },
                     { name: 'Normal Max Tokens', value: NORMAL_MAX_TOKENS.toString(), inline: true },
                     { name: 'Extended Max Tokens', value: EXTENDED_THINKING_MAX_TOKENS.toString(), inline: true },
-                    { name: 'Thinking Mode', value: userSettings[user.id].extendedThinking ? 'ON' : 'OFF', inline: true },
+                    { name: 'Automatic Thinking Mode', value: 'Enabled for very complex prompts', inline: false },
                     { name: 'Show Thinking Process', value: userSettings[user.id].showThinkingProcess ? 'ON' : 'OFF', inline: true },
                     { name: 'Thinking Budget', value: userSettings[user.id].thinkingBudget.toString(), inline: true }
                 );
                 
             // Add token usage fields if the user is the bot creator
             if (isBotOwner) {
+                const usageDetails = Object.entries(tokenTracking.modelUsage).map(([model, usage]) => {
+                    const modelName = model.split('-').slice(0, 2).join('-'); // Make model name shorter
+                    return `**${modelName}**: ${usage.input.toLocaleString()} in, ${usage.output.toLocaleString()} out`;
+                }).join('\n');
+
                 statusEmbed.addFields(
                     { name: 'Token Statistics', value: 
-                        `🔢 **Input**: ${tokenTracking.lifetimeInputTokens.toLocaleString()} tokens\n` +
-                        `📤 **Output**: ${tokenTracking.lifetimeOutputTokens.toLocaleString()} tokens\n` +
+                        `${usageDetails}\n\n` +
                         `🧠 **Thinking**: ${(tokenTracking.lifetimeThinkingTokens || 0).toLocaleString()} tokens\n` +
                         `🛠️ **Tool Use**: ${(tokenTracking.lifetimeToolUseTokens || 0).toLocaleString()} tokens\n` +
                         `📊 **Avg Input/Message**: ${avgInputTokens} tokens\n` +
@@ -1051,8 +1149,10 @@ client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}`);
     
     // Log token tracking information
+    const totalLifetimeInput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.input, 0);
+    const totalLifetimeOutput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.output, 0);
     console.log(`Token tracking active since: ${formatTrackingDate(tokenTracking.trackingSince)}`);
-    console.log(`Current token counts: ${tokenTracking.lifetimeInputTokens.toLocaleString()} input, ${tokenTracking.lifetimeOutputTokens.toLocaleString()} output`);
+    console.log(`Current token counts: ${totalLifetimeInput.toLocaleString()} input, ${totalLifetimeOutput.toLocaleString()} output`);
     
     try {
         console.log('Started refreshing application (/) commands.');
@@ -1095,12 +1195,22 @@ process.on('SIGTERM', () => {
 
 // Add function to calculate costs
 const calculateCosts = () => {
-    const inputCost = (tokenTracking.lifetimeInputTokens / 1000000) * INPUT_TOKEN_COST_PER_MILLION;
-    const outputCost = (tokenTracking.lifetimeOutputTokens / 1000000) * OUTPUT_TOKEN_COST_PER_MILLION;
+    let totalInputCost = 0;
+    let totalOutputCost = 0;
+
+    for (const model in tokenTracking.modelUsage) {
+        if (tokenTracking.modelUsage.hasOwnProperty(model) && MODEL_COSTS[model]) {
+            const usage = tokenTracking.modelUsage[model];
+            const costs = MODEL_COSTS[model];
+            totalInputCost += (usage.input / 1000000) * costs.input;
+            totalOutputCost += (usage.output / 1000000) * costs.output;
+        }
+    }
+
     return {
-        inputCost: inputCost.toFixed(4),
-        outputCost: outputCost.toFixed(4),
-        totalCost: (inputCost + outputCost).toFixed(4),
+        inputCost: totalInputCost.toFixed(4),
+        outputCost: totalOutputCost.toFixed(4),
+        totalCost: (totalInputCost + totalOutputCost).toFixed(4),
         thinkingTokens: tokenTracking.lifetimeThinkingTokens || 0,
         toolUseTokens: tokenTracking.lifetimeToolUseTokens || 0
     };
