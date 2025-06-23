@@ -357,6 +357,7 @@ client.on('messageCreate', async function(message) {
 
         // Check if the message is a reply to another message
         let replyContext = '';
+        let replyAttachments = [];
         if (message.reference && message.reference.messageId) {
             try {
                 const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
@@ -364,26 +365,24 @@ client.on('messageCreate', async function(message) {
                     (repliedMessage.author.id === client.user.id ? 'You (Ai-chan)' : 'Another bot') : 
                     repliedMessage.author.username;
                 
-                // Check if the replied message has attachments
+                // Get attachment information
                 let attachmentInfo = '';
                 if (repliedMessage.attachments.size > 0) {
-                    const attachmentTypes = Array.from(repliedMessage.attachments.values())
-                        .map(attachment => {
-                            if (attachment.contentType.startsWith('image/')) return 'image';
-                            if (attachment.contentType.startsWith('video/')) return 'video';
-                            if (attachment.contentType.startsWith('audio/')) return 'audio';
-                            return 'file';
-                        });
+                    replyAttachments = Array.from(repliedMessage.attachments.values());
+                    const attachmentTypes = replyAttachments.map(attachment => {
+                        if (attachment.contentType.startsWith('image/')) return 'image';
+                        if (attachment.contentType.startsWith('video/')) return 'video';
+                        if (attachment.contentType.startsWith('audio/')) return 'audio';
+                        return 'file';
+                    });
                     attachmentInfo = ` [with ${attachmentTypes.join(', ')}]`;
                 }
                 
-                // Handle empty content with attachments case
                 let messageContent = repliedMessage.content.trim();
                 if (!messageContent && attachmentInfo) {
                     messageContent = "[Media content]";
                 }
                 
-                // Use the full message content without trimming to 150 characters
                 replyContext = `[In reply to ${repliedAuthor}${attachmentInfo}: "${messageContent}"] `;
                 console.log(`Reply context: ${replyContext}`);
             } catch (error) {
@@ -461,9 +460,28 @@ client.on('messageCreate', async function(message) {
 
         let imageData = null;
         let imageDescriptions = '';
-        if (message.attachments.size > 0) {
+        
+        // Check for attachments in current message OR replied message
+        const hasCurrentAttachments = message.attachments.size > 0;
+        const hasReplyAttachments = replyAttachments.length > 0;
+        
+        if (hasCurrentAttachments || hasReplyAttachments) {
             try {
-                const result = await processImages(message.attachments, message.author.id, guildId, fullInput);
+                let attachmentsToProcess = null;
+                
+                if (hasCurrentAttachments) {
+                    // Process current message attachments
+                    attachmentsToProcess = message.attachments;
+                } else if (hasReplyAttachments) {
+                    // Process replied message attachments
+                    // Convert array to Map-like structure that processImages expects
+                    attachmentsToProcess = new Map();
+                    replyAttachments.forEach((attachment, index) => {
+                        attachmentsToProcess.set(index, attachment);
+                    });
+                }
+                
+                const result = await processImages(attachmentsToProcess, message.author.id, guildId, fullInput);
                 
                 // Check if we received image content or descriptions
                 if (typeof result === 'object' && result.imageContent) {
