@@ -1,21 +1,18 @@
 # AiChanBot
-A Discord bot integrated with Anthropic's Claude AI models featuring automatic complexity detection, extended thinking capabilities, and comprehensive tool integration.
+A Discord bot using OpenRouter to access Anthropic Claude models, featuring automatic complexity detection and comprehensive tool integration.
 
 ## Features
 
 ### 🤖 **Intelligent Model Selection**
-- **Haiku Model** (`claude-3-5-haiku-20241022`): Fast responses for simple queries
-- **Sonnet Model** (`claude-sonnet-4-20250514`): Advanced reasoning for complex problems
+- **Smaller Model** (`anthropic/claude-3.5-haiku`): Fast responses for simple queries
+- **Bigger Model** (`anthropic/claude-sonnet-4`): Advanced reasoning for complex problems
 - **Automatic Complexity Detection**: Bot automatically chooses the right model based on your query complexity
 
-### 🧠 **Extended Thinking Mode**
-- Automatically activated for very complex queries
-- Shows step-by-step reasoning process (optional)
-- Configurable thinking token budget
-- Deep analysis capabilities for complex problems
+### 🧠 **Thinking Mode**
+- Optional thinking indicator. Note: OpenRouter does not expose Anthropic's hidden reasoning tokens.
 
 ### 🛠️ **Tool Integration**
-Claude automatically determines when to use tools - no special commands needed:
+The model can call tools automatically - no special commands needed:
 - `web_search` - Searches the web for real-time information
 - `web_scrape` - Scrapes content from specific URLs
 - `multi_scrape` - Scrapes content from multiple URLs simultaneously
@@ -53,7 +50,6 @@ Claude automatically determines when to use tools - no special commands needed:
 ```json
 {
   "discord.js": "^14.x",
-  "@anthropic-ai/sdk": "latest",
   "node-fetch": "^2.x",
   "dotenv": "latest",
   "axios": "latest",
@@ -67,13 +63,13 @@ Create a `.env` file in the root directory:
 
 ```env
 DISCORD_TOKEN=your_discord_bot_token
-ANTHROPIC_API_KEY=your_anthropic_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
 BOT_CREATOR_ID=your_discord_user_id
 ```
 
 **Environment Variables:**
 - `DISCORD_TOKEN`: Your Discord bot token from the Discord Developer Portal
-- `ANTHROPIC_API_KEY`: Your Anthropic API key for Claude access
+- `OPENROUTER_API_KEY`: Your OpenRouter API key
 - `BOT_CREATOR_ID`: (Optional) Your Discord user ID for admin features. Enable Developer Mode in Discord (Settings > Advanced > Developer Mode), then right-click your username and select "Copy ID"
 
 ## Installation
@@ -124,13 +120,13 @@ pm2 save
 ```
 @Ai-chan What's the weather like today?
 ```
-*Uses Haiku model for fast response*
+*Uses smaller model for fast response*
 
 **Complex Query:**
 ```
 @Ai-chan Write a detailed business plan for a tech startup focusing on AI-powered education tools
 ```
-*Automatically switches to Sonnet model with extended thinking*
+*Automatically switches to bigger model with extended thinking*
 
 **Image Analysis:**
 ```
@@ -148,13 +144,12 @@ pm2 save
 
 ### Token Management
 - Real-time token usage tracking per model
-- Automatic cost calculation based on current Anthropic pricing
-- Cache performance monitoring
-- Separate tracking for thinking tokens and tool usage tokens
+- Automatic cost calculation (pricing values in code)
 
 ### Model Costs (per million tokens)
-- **Sonnet**: $3.00 input / $15.00 output
-- **Haiku**: $0.80 input / $4.00 output
+- Note: Values are examples used for cost display and may not reflect real-time pricing.
+- **Bigger**: $3.00 input / $15.00 output
+- **Smaller**: $0.80 input / $4.00 output
 
 ### Security Features
 - Bot creator privilege system
@@ -175,7 +170,7 @@ pm2 save
 - You are expected to properly set up the Discord bot at https://discord.com/developers/applications
 - Issues related to Discord bot setup will not be addressed
 - The bot can provide NSFW responses when appropriate
-- Usage costs are based on Anthropic's current pricing model
+- Usage costs are based on pricing values defined in code
 
 ## Developer
 

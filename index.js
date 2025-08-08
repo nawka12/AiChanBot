@@ -3,26 +3,18 @@ require('dotenv').config();
 
 const { TOOL_SCHEMAS, executeToolCalls } = require('./tools.js');
 const { Client, GatewayIntentBits, Partials, ActivityType, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const Anthropic = require('@anthropic-ai/sdk');
 const fetch = require('node-fetch');
 const fs = require('fs');
 const path = require('path');
 
-// Constants
-const SONNET_MODEL = 'claude-sonnet-4-20250514';
-const HAIKU_MODEL = 'claude-3-5-haiku-20241022'; // As requested by user
-const COMPLEXITY_CHECK_MODEL = 'claude-3-5-haiku-20241022'; // Use a known fast model for complexity check
+// Model and OpenRouter helpers (modularized)
+const { getModels, getModelCosts, selectModelByComplexity } = require('./modelConfig.js');
+const { toOpenAIMessage, toOpenAITools, callChat, modelSupportsTools } = require('./openrouter.js');
 
-const MODEL_COSTS = {
-    [SONNET_MODEL]: {
-        input: 3, // per million tokens
-        output: 15
-    },
-    [HAIKU_MODEL]: {
-        input: 0.80, // per million tokens
-        output: 4.0
-    }
-};
+// Models
+const { BIGGER_MODEL, SMALLER_MODEL } = getModels();
+const COMPLEXITY_CHECK_MODEL = SMALLER_MODEL; // Use a known fast model for complexity check
+const MODEL_COSTS = getModelCosts();
 
 // Bot creator identification (using Discord user ID instead of username for security)
 // Add BOT_CREATOR_ID=your_discord_user_id to your .env file
@@ -56,8 +48,8 @@ const TOKEN_DATA_FILE = path.join(__dirname, 'token_data.json');
 // Add token tracking variables
 let tokenTracking = {
     modelUsage: {
-        [SONNET_MODEL]: { input: 0, output: 0 },
-        [HAIKU_MODEL]: { input: 0, output: 0 }
+        [BIGGER_MODEL]: { input: 0, output: 0 },
+        [SMALLER_MODEL]: { input: 0, output: 0 }
     },
     lifetimeCacheCreationInputTokens: 0,
     lifetimeCacheReadInputTokens: 0,
@@ -88,11 +80,11 @@ try {
         if (loadedData.lifetimeInputTokens || loadedData.lifetimeOutputTokens) {
             console.log('Migrating old token data format...');
             tokenTracking.modelUsage = {
-                [SONNET_MODEL]: {
+                [BIGGER_MODEL]: {
                     input: loadedData.lifetimeInputTokens || 0,
                     output: loadedData.lifetimeOutputTokens || 0
                 },
-                [HAIKU_MODEL]: { input: 0, output: 0 }
+                [SMALLER_MODEL]: { input: 0, output: 0 }
             };
 
             // Copy other fields
@@ -110,8 +102,8 @@ try {
             tokenTracking = loadedData;
             // Ensure all models are initialized in the structure
             if (!tokenTracking.modelUsage) tokenTracking.modelUsage = {};
-            if (!tokenTracking.modelUsage[SONNET_MODEL]) tokenTracking.modelUsage[SONNET_MODEL] = { input: 0, output: 0 };
-            if (!tokenTracking.modelUsage[HAIKU_MODEL]) tokenTracking.modelUsage[HAIKU_MODEL] = { input: 0, output: 0 };
+            if (!tokenTracking.modelUsage[BIGGER_MODEL]) tokenTracking.modelUsage[BIGGER_MODEL] = { input: 0, output: 0 };
+            if (!tokenTracking.modelUsage[SMALLER_MODEL]) tokenTracking.modelUsage[SMALLER_MODEL] = { input: 0, output: 0 };
         }
         console.log('Loaded token tracking data from file');
     } else {
@@ -149,32 +141,30 @@ const client = new Client({
     ]
 });
 
-const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-});
+// OpenRouter functions are now imported from openrouter.js
 
+const MIN_COMPLEXITY_OUTPUT_TOKENS = 1000; // Some providers require >=16; use a safe margin
 const getPromptComplexity = async (prompt) => {
     try {
-        const response = await anthropic.messages.create({
+        const messages = [
+            { role: 'system', content: `You are a prompt complexity analyzer. Your task is to classify the user's prompt into one of three categories: 'simple', 'complex', or 'very_complex'.\n- 'simple': A straightforward question, a simple request, a greeting, or a short phrase that can be answered without deep reasoning or multiple steps. Examples: "hello", "what's the weather?", "tell me a joke".\n- 'complex': A prompt that requires some reasoning, data retrieval (like web search), or a multi-part answer. It's not a simple lookup. Examples: "summarize this article", "what are the main differences between Python and JavaScript?", "write a short story about a robot".\n- 'very_complex': A prompt that requires deep, step-by-step reasoning, planning, code generation, or analysis of a complex topic. This often involves a chain of thought. Examples: "develop a business plan for a new tech startup", "write a detailed technical report on quantum computing", "act as a travel agent and plan a 2-week itinerary for Japan".\nRespond with ONLY one of the three category names and nothing else.` },
+            { role: 'user', content: prompt }
+        ];
+        const response = await callChat({
             model: COMPLEXITY_CHECK_MODEL,
-            max_tokens: 10,
-            system: `You are a prompt complexity analyzer. Your task is to classify the user's prompt into one of three categories: 'simple', 'complex', or 'very_complex'.
-- 'simple': A straightforward question, a simple request, a greeting, or a short phrase that can be answered without deep reasoning or multiple steps. Examples: "hello", "what's the weather?", "tell me a joke".
-- 'complex': A prompt that requires some reasoning, data retrieval (like web search), or a multi-part answer. It's not a simple lookup. Examples: "summarize this article", "what are the main differences between Python and JavaScript?", "write a short story about a robot".
-- 'very_complex': A prompt that requires deep, step-by-step reasoning, planning, code generation, or analysis of a complex topic. This often involves a chain of thought. Examples: "develop a business plan for a new tech startup", "write a detailed technical report on quantum computing", "act as a travel agent and plan a 2-week itinerary for Japan".
-Respond with ONLY one of the three category names and nothing else.`,
-            messages: [{ role: 'user', content: prompt }]
+            messages,
+            max_tokens: MIN_COMPLEXITY_OUTPUT_TOKENS
         });
-        const complexity = response.content[0].text.trim().toLowerCase();
+        const text = response.choices?.[0]?.message?.content || '';
+        const complexity = text.trim().toLowerCase();
         
-        // Track token usage for the complexity check itself
         if (response.usage && tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL]) {
-            const inputTokens = response.usage.input_tokens || 0;
-            const outputTokens = response.usage.output_tokens || 0;
+            const inputTokens = response.usage.prompt_tokens || 0;
+            const outputTokens = response.usage.completion_tokens || 0;
             tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL].input += inputTokens;
             tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL].output += outputTokens;
             console.log(`Complexity check (${COMPLEXITY_CHECK_MODEL}) usage: ${inputTokens} input, ${outputTokens} output tokens.`);
-            saveTokenData(); // Save data after tracking
+            saveTokenData();
         }
 
         if (['simple', 'complex', 'very_complex'].includes(complexity)) {
@@ -182,10 +172,10 @@ Respond with ONLY one of the three category names and nothing else.`,
             return complexity;
         }
         console.warn(`Unexpected complexity assessment: ${complexity}. Defaulting to 'simple'.`);
-        return 'simple'; // Default to simple if the model returns something unexpected
+        return 'simple';
     } catch (error) {
         console.error('Error assessing prompt complexity:', error);
-        return 'simple'; // Default to simple on error
+        return 'simple';
     }
 };
 
@@ -221,26 +211,24 @@ const processImages = async (attachments, userId, guildId, input) => {
             // If there's no input text and we just want to describe the image,
             // use the simplified approach
             if (!input || input.trim() === '') {
-                const imageAI = await anthropic.messages.create({
-                    model: HAIKU_MODEL,
+                const openaiMessages = [
+                    { role: 'system', content: `${config.systemMessage(userId, false)} Describe the image concisely and answer the user's question if provided.` },
+                    ...conversationHistory.map(toOpenAIMessage),
+                    toOpenAIMessage({
+                        role: 'user',
+                        content: [
+                            imageContent,
+                            { type: 'text', text: input || "What's in this image?" }
+                        ]
+                    })
+                ];
+                const imageAI = await callChat({
+                    model: SMALLER_MODEL,
                     max_tokens: NORMAL_MAX_TOKENS,
-                    system: `${config.systemMessage(userId, false)} Describe the image concisely and answer the user's question if provided.`,
-                    messages: [
-                        ...conversationHistory,
-                        {
-                            role: "user",
-                            content: [
-                                imageContent,
-                                {
-                                    type: "text",
-                                    text: input || "What's in this image?"
-                                }
-                            ]
-                        }
-                    ]
+                    messages: openaiMessages
                 });
 
-                const imageDescription = imageAI.content[0].text;
+                const imageDescription = imageAI.choices?.[0]?.message?.content || '';
                 imageDescriptions.push(imageDescription);
 
                 // Add image description to the appropriate conversation history
@@ -417,18 +405,16 @@ client.on('messageCreate', async function(message) {
 
         // New logic: Determine prompt complexity to select model
         const complexity = await getPromptComplexity(fullInput);
-        let selectedModel = HAIKU_MODEL;
+        let selectedModel = selectModelByComplexity(complexity);
         let forceExtendedThinking = false;
         
         switch (complexity) {
             case 'complex':
-                selectedModel = SONNET_MODEL;
-                await message.channel.send(`> 🔍 This seems a bit complex. Switching to my more powerful Sonnet model to give you the best possible answer.`);
+                await message.channel.send(`> 🔍 This seems a bit complex. Switching to my more powerful bigger model to give you the best possible answer.`);
                 break;
             case 'very_complex':
-                selectedModel = SONNET_MODEL;
                 forceExtendedThinking = true;
-                await message.channel.send(`> 🧠 This requires deep thought. Engaging my powerful Sonnet model and enabling thinking mode for a thorough analysis.`);
+                await message.channel.send(`> 🧠 This requires deep thought. Engaging my powerful bigger model and enabling thinking mode for a thorough analysis.`);
                 break;
         }
 
@@ -485,9 +471,9 @@ client.on('messageCreate', async function(message) {
                 
                 // Check if we received image content or descriptions
                 if (typeof result === 'object' && result.imageContent) {
-                    // We have image content to pass directly to Claude with the query
+                    // We have image content to pass directly to the model with the query
                     imageData = result;
-                    console.log("Image prepared for direct processing with Claude");
+                    console.log("Image prepared for direct processing with model");
                 } else {
                     // We have image descriptions (for the simple case without tool use)
                     imageDescriptions = result;
@@ -559,23 +545,14 @@ client.on('messageCreate', async function(message) {
         console.log("Messages to be sent to API:", JSON.stringify(messages, null, 2));
 
         try {
-            // Create API request parameters
-            const apiParams = {
-                model: selectedModel,
-                max_tokens: isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS,
-                system: config.systemMessage(message.author.username, isExtendedThinking),
-                messages: messages,
-                tools: TOOL_SCHEMAS
-            };
-            
-            // Add thinking parameters if extended thinking is enabled
-            if (isExtendedThinking) {
-                apiParams.thinking = {
-                    type: "enabled",
-                    budget_tokens: thinkingBudget
-                };
-            }
-            
+            // Prepare OpenAI-compatible messages and tools
+            const openaiMessagesBase = [
+                { role: 'system', content: config.systemMessage(message.author.username, isExtendedThinking) },
+                ...messages.map(toOpenAIMessage)
+            ];
+            const toolsSupported = await modelSupportsTools(selectedModel);
+            const openaiTools = toolsSupported ? toOpenAITools(TOOL_SCHEMAS) : undefined;
+
             // Send a "Thinking..." message if extended thinking is enabled
             let thinkingMessage = null;
             const startTime = Date.now();
@@ -584,42 +561,45 @@ client.on('messageCreate', async function(message) {
                 thinkingMessage = await message.reply("Thinking...");
             }
             
-            // Make the API request
-            let response = await anthropic.messages.create(apiParams);
-            
-            // Add debug logging for initial response
-            console.log(`Initial response - content types: ${response.content.map(item => item.type).join(', ')}`);
-            console.log(`Has thinking content: ${response.content.some(item => item.type === 'thinking')}`);
-            if (response.content.some(item => item.type === 'thinking')) {
-                console.log(`Thinking item exists: ${!!response.content.find(item => item.type === 'thinking')}`);
-            }
-            
-            // Process any tool calls from Claude
-            let toolCallFound = response.content.some(item => item.type === 'tool_use');
-            
-            while (toolCallFound) {
-                console.log("\nClaude is requesting to use tools:");
-                const toolCalls = response.content.filter(item => item.type === 'tool_use');
+            // Make the first API request
+            let openaiMessages = [...openaiMessagesBase];
+            let response = await callChat({
+                model: selectedModel,
+                max_tokens: isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS,
+                messages: openaiMessages,
+                tools: openaiTools
+            });
+
+            // Process any tool calls
+            let assistantMessage = response.choices?.[0]?.message;
+            let toolCalls = toolsSupported ? (assistantMessage?.tool_calls || []) : [];
+            while (toolCalls && toolCalls.length > 0) {
+                console.log("\nModel is requesting to use tools:");
                 
                 // Log the tool calls and send notifications
                 for (const call of toolCalls) {
-                    console.log(`- Tool: ${call.name}`);
-                    console.log(`  Input: ${JSON.stringify(call.input, null, 2)}`);
+                    const toolName = call.function?.name;
+                    const argsStr = call.function?.arguments || '{}';
+                    console.log(`- Tool: ${toolName}`);
+                    console.log(`  Input: ${argsStr}`);
                     
                     // Send a notification message for each tool use
                     let toolNotification = '';
-                    if (call.name === 'web_search') {
-                        toolNotification = `Using web search for: \`${call.input.query}\``;
-                    } else if (call.name === 'web_scrape') {
-                        toolNotification = `Using web scraper for: \`${call.input.url}\``;
-                    } else if (call.name === 'multi_scrape') {
-                        toolNotification = `Using multi-page scraper for \`${call.input.urls.length}\` URLs`;
-                    } else if (call.name === 'nitter_tweets') {
-                        const username = call.input.username.startsWith('@') ? call.input.username : `@${call.input.username}`;
-                        toolNotification = `Using nitter tweets tool for: \`${username}\``;
-                    } else if (call.name === 'tweet_url_scrape') {
-                        toolNotification = `Using tweet URL scraper for: \`${call.input.url}\``;
-                    }
+                    try {
+                        const parsed = JSON.parse(argsStr || '{}');
+                        if (toolName === 'web_search') {
+                            toolNotification = `Using web search for: \`${parsed.query}\``;
+                        } else if (toolName === 'web_scrape') {
+                            toolNotification = `Using web scraper for: \`${parsed.url}\``;
+                        } else if (toolName === 'multi_scrape') {
+                            toolNotification = `Using multi-page scraper for \`${(parsed.urls||[]).length}\` URLs`;
+                        } else if (toolName === 'nitter_tweets') {
+                            const username = (parsed.username || '').startsWith('@') ? parsed.username : `@${parsed.username||''}`;
+                            toolNotification = `Using nitter tweets tool for: \`${username}\``;
+                        } else if (toolName === 'tweet_url_scrape') {
+                            toolNotification = `Using tweet URL scraper for: \`${parsed.url}\``;
+                        }
+                    } catch (_) {}
                     
                     if (toolNotification) {
                         await message.channel.send(toolNotification);
@@ -632,18 +612,22 @@ client.on('messageCreate', async function(message) {
                 let toolFailures = [];
                 
                 try {
-                    toolResults = await executeToolCalls(toolCalls.map(call => ({
-                        id: call.id,
-                        name: call.name,
-                        input: call.input
-                    })));
+                    toolResults = await executeToolCalls(toolCalls.map(call => {
+                        let args = {};
+                        try { args = JSON.parse(call.function?.arguments || '{}'); } catch (_) {}
+                        return ({
+                            id: call.id,
+                            name: call.function?.name,
+                            input: args
+                        });
+                    }));
                     
                     // Check for errors in tool results
                     for (const result of toolResults) {
                         const parsedOutput = JSON.parse(result.output);
                         if (parsedOutput.error) {
                             const toolCall = toolCalls.find(call => call.id === result.tool_call_id);
-                            const errorMsg = `Error with ${toolCall ? toolCall.name : 'unknown tool'}`;
+                            const errorMsg = `Error with ${toolCall ? (toolCall.function?.name) : 'unknown tool'}`;
                             toolFailures.push(errorMsg);
                             console.error(errorMsg);
                         }
@@ -671,58 +655,37 @@ client.on('messageCreate', async function(message) {
                     }
                 }
 
-                // Add the tool outputs to the messages
-                messages.push({
-                    role: 'assistant',
-                    content: response.content
-                });
+                // Add the assistant message with tool calls to the API message list
+                openaiMessages.push(assistantMessage);
 
-                // Add the tool results to the messages
-                messages.push({
-                    role: 'user',
-                    content: toolResults.map(result => ({
-                        type: 'tool_result',
-                        tool_use_id: result.tool_call_id,
-                        content: result.output
-                    }))
-                });
+                // Add each tool result as a tool role message (include name per OpenRouter spec)
+                for (const tr of toolResults) {
+                    const matchedCall = toolCalls.find(c => c.id === tr.tool_call_id);
+                    const toolName = matchedCall?.function?.name;
+                    openaiMessages.push({
+                        role: 'tool',
+                        tool_call_id: tr.tool_call_id,
+                        name: toolName,
+                        content: tr.output
+                    });
+                }
 
-                // Get Claude's response with the tool results
-                const apiParamsAfterTools = {
+                // Get model's response with the tool results
+                response = await callChat({
                     model: selectedModel,
                     max_tokens: isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS,
-                    system: config.systemMessage(message.author.username, isExtendedThinking) + (toolFailures.length > 0 ? 
-                        " NOTE: Some tools encountered errors when trying to access the web. Please acknowledge this in your response and try to answer the question with the information you have, or suggest alternative approaches if appropriate." : ""),
-                    messages: messages,
-                    tools: TOOL_SCHEMAS // Add tools to subsequent calls so Claude can continue using them
-                };
-                
-                // Add thinking parameters if extended thinking is enabled
-                if (isExtendedThinking) {
-                    apiParamsAfterTools.thinking = {
-                        type: "enabled",
-                        budget_tokens: thinkingBudget
-                    };
-                }
-                
-                // Make the API request
-                response = await anthropic.messages.create(apiParamsAfterTools);
-                
-                // Add debug logging for response after tools
-                console.log(`Response after tools - content types: ${response.content.map(item => item.type).join(', ')}`);
-                console.log(`Has thinking content: ${response.content.some(item => item.type === 'thinking')}`);
-                if (response.content.some(item => item.type === 'thinking')) {
-                    console.log(`Thinking item exists: ${!!response.content.find(item => item.type === 'thinking')}`);
-                }
-                
-                // Check if new tool calls were made
-                toolCallFound = response.content.some(item => item.type === 'tool_use');
+                    messages: openaiMessages,
+                    tools: openaiTools
+                });
+
+                assistantMessage = response.choices?.[0]?.message;
+                toolCalls = toolsSupported ? (assistantMessage?.tool_calls || []) : [];
             }
             
             // Track token usage
             if (response.usage) {
-                const inputTokens = response.usage.input_tokens || 0;
-                const outputTokens = response.usage.output_tokens || 0;
+                const inputTokens = response.usage.prompt_tokens || 0;
+                const outputTokens = response.usage.completion_tokens || 0;
 
                 // Track standard input/output tokens for the selected model
                 if (!tokenTracking.modelUsage[selectedModel]) {
@@ -731,31 +694,9 @@ client.on('messageCreate', async function(message) {
                 tokenTracking.modelUsage[selectedModel].input += inputTokens;
                 tokenTracking.modelUsage[selectedModel].output += outputTokens;
 
-                // Track extended thinking tokens if present in the response
-                let thinkingTokenCount = 0;
-                if (isExtendedThinking && response.content.some(item => item.type === 'thinking')) {
-                    const thinkingItem = response.content.find(item => item.type === 'thinking');
-                    if (thinkingItem && thinkingItem.thinking) {
-                        // Note: This is an estimate as Anthropic doesn't provide exact thinking token count
-                        // Current assistant turn thinking DOES count toward input tokens
-                        thinkingTokenCount = Math.ceil(thinkingItem.thinking.length / 4); // Rough estimate
-                        tokenTracking.lifetimeThinkingTokens += thinkingTokenCount;
-                        console.log(`Estimated thinking tokens: ${thinkingTokenCount}`);
-                    }
-                }
-                
-                // Track tool use tokens if present in the response
-                let toolUseTokenCount = 0;
-                const toolUseItems = response.content.filter(item => item.type === 'tool_use');
-                if (toolUseItems.length > 0) {
-                    // Rough estimate of tool use tokens - adjust according to actual usage patterns
-                    toolUseTokenCount = toolUseItems.reduce((acc, item) => {
-                        // Estimate tokens for each tool call based on parameters
-                        return acc + Math.ceil(JSON.stringify(item).length / 4);
-                    }, 0);
-                    tokenTracking.lifetimeToolUseTokens += toolUseTokenCount;
-                    console.log(`Estimated tool use tokens: ${toolUseTokenCount}`);
-                }
+                // Thinking/tool-use tokens not available via OpenRouter reliably
+                const thinkingTokenCount = 0;
+                const toolUseTokenCount = 0;
                 
                 // Track cache usage if available
                 let cacheInfo = '';
@@ -803,129 +744,28 @@ client.on('messageCreate', async function(message) {
                 await thinkingMessage.edit(`Done! Thinking completed in ${thinkingTimeInSeconds}s.`);
             }
 
-            // Enhanced debugging of the response content
-            console.log(`Response content types: ${response.content ? response.content.map(item => item.type).join(', ') : 'no content'}`);
-            console.log(`Response content length: ${response.content ? response.content.length : 0}`);
-            if (response.content && response.content.length > 0) {
-                for (let i = 0; i < response.content.length; i++) {
-                    console.log(`Item ${i} type: ${response.content[i].type}`);
-                    if (response.content[i].type === 'text') {
-                        console.log(`Text content length: ${response.content[i].text.length}`);
-                    }
-                }
-            } else {
-                console.log("WARNING: Empty response content array");
+            // Prepare final response text
+            let finalResponse = assistantMessage?.content || '';
+            if ((!finalResponse || finalResponse.trim() === '') && imageDescriptions) {
+                finalResponse = imageDescriptions;
+            }
+            if (!finalResponse || finalResponse.trim() === '') {
+                finalResponse = 'I encountered an issue processing your request. Please try again.';
             }
 
-            // Process the response based on whether it contains thinking content
-            let finalResponse = '';
-            let thinkingContent = '';
-            
-            // Handle case where response.content is empty or undefined
-            if (!response.content || response.content.length === 0) {
-                // Check if we just processed images that might already have descriptions
-                if (imageDescriptions) {
-                    // Use the image description as the final response
-                    finalResponse = imageDescriptions;
-                    console.log("Using image description as response since API returned empty content");
+            // Send the final response
+            const messageParts = splitMessage(finalResponse);
+            for (let i = 0; i < messageParts.length; i++) {
+                if (message.channel.type === 1) {
+                    await message.channel.send(messageParts[i]);
                 } else {
-                    finalResponse = "I received an empty response from the API. This could be due to a temporary issue. Please try your query again or simplify it.";
-                }
-            } else {
-                // Get the text content from the response
-                const textContent = response.content.find(item => item.type === 'text');
-                
-                // If no text content, create a fallback response about tool usage
-                if (!textContent || !textContent.text || textContent.text.trim() === '') {
-                    const toolCalls = response.content.filter(item => item.type === 'tool_use');
-                    if (toolCalls.length > 0) {
-                        finalResponse = "I've used my tools to gather information, but something went wrong with generating the final response. The data has been collected successfully, so please ask me to summarize what I found about your query.";
-                    } else if (imageDescriptions) {
-                        // Also check here if we have image descriptions available
-                        finalResponse = imageDescriptions;
-                        console.log("Using image description as response since text content is empty");
+                    if (i === 0 && !thinkingMessage) {
+                        await message.reply({
+                            content: messageParts[i],
+                            allowedMentions: { repliedUser: true },
+                        });
                     } else {
-                        finalResponse = 'I encountered an issue processing your request. This could be due to an error with the API. Please try again with a simpler query.';
-                    }
-                } else {
-                    finalResponse = textContent.text;
-                }
-            }
-            
-            // Improved check for thinking content - handle different response formats
-            const hasThinkingContent = response.content && response.content.some(item => item.type === 'thinking');
-            const thinkingItem = response.content && hasThinkingContent ? response.content.find(item => item.type === 'thinking') : null;
-            
-            if (hasThinkingContent && thinkingItem) {
-                thinkingContent = thinkingItem.thinking;
-                
-                // If extended thinking is enabled and show thinking process is enabled, show the thinking process
-                if (isExtendedThinking && showThinkingProcess) {
-                    // Send the thinking process first
-                    console.log("Sending thinking process, length:", thinkingContent.length);
-                    const thinkingParts = splitMessage(`**My thinking process:**\n\n${thinkingContent}`);
-                    for (let i = 0; i < thinkingParts.length; i++) {
-                        await message.channel.send(thinkingParts[i]);
-                    }
-                    
-                    // Then send the final response
-                    const responseParts = splitMessage(`**My answer:**\n\n${finalResponse}`);
-                    for (let i = 0; i < responseParts.length; i++) {
-                        if (i === 0) {
-                            if (thinkingMessage) {
-                                // If we already sent a thinking message, send a new message instead of replying again
-                                await message.channel.send(responseParts[i]);
-                            } else {
-                                await message.reply({
-                                    content: responseParts[i],
-                                    allowedMentions: { repliedUser: true },
-                                });
-                            }
-                        } else {
-                            await message.channel.send(responseParts[i]);
-                        }
-                    }
-                } else {
-                    // If extended thinking is not enabled or show thinking process is disabled, just send the final response
-                    const messageParts = splitMessage(finalResponse);
-                    
-                    for (let i = 0; i < messageParts.length; i++) {
-                        if (message.channel.type === 1) {
-                            // For DMs
-                            await message.channel.send(messageParts[i]);
-                        } else {
-                            // For guild messages
-                            if (i === 0 && !thinkingMessage) {
-                                // Only reply to the original message if we didn't send a thinking message
-                                await message.reply({
-                                    content: messageParts[i],
-                                    allowedMentions: { repliedUser: true },
-                                });
-                            } else {
-                                await message.channel.send(messageParts[i]);
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Standard response without thinking content
-                const messageParts = splitMessage(finalResponse);
-                
-                for (let i = 0; i < messageParts.length; i++) {
-                    if (message.channel.type === 1) {
-                        // For DMs
                         await message.channel.send(messageParts[i]);
-                    } else {
-                        // For guild messages
-                        if (i === 0 && !thinkingMessage) {
-                            // Only reply to the original message if we didn't send a thinking message
-                            await message.reply({
-                                content: messageParts[i],
-                                allowedMentions: { repliedUser: true },
-                            });
-                        } else {
-                            await message.channel.send(messageParts[i]);
-                        }
                     }
                 }
             }
@@ -970,12 +810,7 @@ client.on('messageCreate', async function(message) {
             }
         } catch (error) {
             console.error("API Error:", error);
-            // Check for overloaded error
-            if (error.error?.error?.type === 'overloaded_error') {
-                await message.reply("Sorry, Claude's servers are currently overloaded. Please try again in a few minutes. 🔄");
-            } else {
-                await message.reply(`There was an error processing your request.`);
-            }
+            await message.reply(`There was an error processing your request.`);
         }
     } catch (err) {
         console.error("General Error:", err);
@@ -986,8 +821,8 @@ client.on('messageCreate', async function(message) {
 const resetTokenStats = () => {
     tokenTracking = {
         modelUsage: {
-            [SONNET_MODEL]: { input: 0, output: 0 },
-            [HAIKU_MODEL]: { input: 0, output: 0 }
+            [BIGGER_MODEL]: { input: 0, output: 0 },
+            [SMALLER_MODEL]: { input: 0, output: 0 }
         },
         lifetimeCacheCreationInputTokens: 0,
         lifetimeCacheReadInputTokens: 0,
@@ -1103,7 +938,7 @@ client.on('interactionCreate', async interaction => {
                 .setDescription(`Current configuration and status information${isBotOwner ? ' (Owner View)' : ''}`)
                 .setThumbnail(client.user.displayAvatarURL())
                 .addFields(
-                    { name: 'AI Models', value: `Default: \`${HAIKU_MODEL}\`\nComplex: \`${SONNET_MODEL}\``, inline: false },
+                    { name: 'AI Models', value: `Default: \`${SMALLER_MODEL}\`\nComplex: \`${BIGGER_MODEL}\``, inline: false },
                     { name: 'Normal Max Tokens', value: NORMAL_MAX_TOKENS.toString(), inline: true },
                     { name: 'Extended Max Tokens', value: EXTENDED_THINKING_MAX_TOKENS.toString(), inline: true },
                     { name: 'Automatic Thinking Mode', value: 'Enabled for very complex prompts', inline: false },
