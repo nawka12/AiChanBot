@@ -1,19 +1,22 @@
 // Centralized model configuration and selection
 
 const DEFAULT_MODELS = {
-  BIGGER_MODEL: process.env.OPENROUTER_MODEL_BIGGER || 'anthropic/claude-sonnet-4',
-  SMALLER_MODEL: process.env.OPENROUTER_MODEL_SMALLER || 'anthropic/claude-3.5-haiku',
+  BIGGER_MODEL: process.env.OPENROUTER_MODEL_BIGGER || 'openai/gpt-5-mini',
+  SMALLER_MODEL: process.env.OPENROUTER_MODEL_SMALLER || 'openai/gpt-5-nano',
+  COMPLEXITY_MODEL: process.env.OPENROUTER_MODEL_COMPLEXITY || process.env.OPENROUTER_MODEL_SMALLER || 'openai/gpt-4.1-nano',
 };
 
 const MODEL_COSTS = {
   [DEFAULT_MODELS.BIGGER_MODEL]: { input: 0.25, output: 2.0 },
   [DEFAULT_MODELS.SMALLER_MODEL]: { input: 0.05, output: 0.4 },
+  [DEFAULT_MODELS.COMPLEXITY_MODEL]: { input: 0.10, output: 0.4 },
 };
 
 function getModels() {
   return {
     BIGGER_MODEL: DEFAULT_MODELS.BIGGER_MODEL,
     SMALLER_MODEL: DEFAULT_MODELS.SMALLER_MODEL,
+    COMPLEXITY_MODEL: DEFAULT_MODELS.COMPLEXITY_MODEL,
   };
 }
 

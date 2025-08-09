@@ -9,11 +9,11 @@ const path = require('path');
 
 // Model and OpenRouter helpers (modularized)
 const { getModels, getModelCosts, selectModelByComplexity } = require('./modelConfig.js');
-const { toOpenAIMessage, toOpenAITools, callChat, modelSupportsTools } = require('./openrouter.js');
+const { toOpenAIMessage, toOpenAITools, callChat, modelSupportsTools, modelSupportsReasoning } = require('./openrouter.js');
 
 // Models
-const { BIGGER_MODEL, SMALLER_MODEL } = getModels();
-const COMPLEXITY_CHECK_MODEL = SMALLER_MODEL; // Use a known fast model for complexity check
+const { BIGGER_MODEL, SMALLER_MODEL, COMPLEXITY_MODEL } = getModels();
+const COMPLEXITY_CHECK_MODEL = COMPLEXITY_MODEL; // Independent configurable model for complexity check
 const MODEL_COSTS = getModelCosts();
 
 // Bot creator identification (using Discord user ID instead of username for security)
@@ -49,7 +49,8 @@ const TOKEN_DATA_FILE = path.join(__dirname, 'token_data.json');
 let tokenTracking = {
     modelUsage: {
         [BIGGER_MODEL]: { input: 0, output: 0 },
-        [SMALLER_MODEL]: { input: 0, output: 0 }
+        [SMALLER_MODEL]: { input: 0, output: 0 },
+        [COMPLEXITY_CHECK_MODEL]: { input: 0, output: 0 }
     },
     lifetimeCacheCreationInputTokens: 0,
     lifetimeCacheReadInputTokens: 0,
@@ -104,6 +105,7 @@ try {
             if (!tokenTracking.modelUsage) tokenTracking.modelUsage = {};
             if (!tokenTracking.modelUsage[BIGGER_MODEL]) tokenTracking.modelUsage[BIGGER_MODEL] = { input: 0, output: 0 };
             if (!tokenTracking.modelUsage[SMALLER_MODEL]) tokenTracking.modelUsage[SMALLER_MODEL] = { input: 0, output: 0 };
+            if (!tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL]) tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL] = { input: 0, output: 0 };
         }
         console.log('Loaded token tracking data from file');
     } else {
@@ -158,9 +160,12 @@ const getPromptComplexity = async (prompt) => {
         const text = response.choices?.[0]?.message?.content || '';
         const complexity = text.trim().toLowerCase();
         
-        if (response.usage && tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL]) {
+        if (response.usage) {
             const inputTokens = response.usage.prompt_tokens || 0;
             const outputTokens = response.usage.completion_tokens || 0;
+            if (!tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL]) {
+                tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL] = { input: 0, output: 0 };
+            }
             tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL].input += inputTokens;
             tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL].output += outputTokens;
             console.log(`Complexity check (${COMPLEXITY_CHECK_MODEL}) usage: ${inputTokens} input, ${outputTokens} output tokens.`);
@@ -306,12 +311,22 @@ const commands = [
                 )),
     new SlashCommandBuilder()
         .setName('thinking_budget')
-        .setDescription('Set the thinking budget (tokens)')
+        .setDescription('Set the thinking budget (tokens for non-OpenAI) or effort (OpenAI)')
         .addIntegerOption(option => 
-            option.setName('budget')
-                .setDescription('Number of tokens for thinking (min 1024)')
-                .setRequired(true)
-                .setMinValue(MIN_THINKING_BUDGET)),
+            option.setName('tokens')
+                .setDescription('Number of tokens for thinking (min 1024) - non-OpenAI only')
+                .setRequired(false)
+                .setMinValue(MIN_THINKING_BUDGET))
+        .addStringOption(option =>
+            option.setName('effort')
+                .setDescription('Effort level (low, medium, high) - OpenAI only')
+                .setRequired(false)
+                .addChoices(
+                    { name: 'low', value: 'low' },
+                    { name: 'medium', value: 'medium' },
+                    { name: 'high', value: 'high' }
+                )
+        ),
     new SlashCommandBuilder()
         .setName('reset')
         .setDescription('Reset the conversation history'),
@@ -424,7 +439,8 @@ client.on('messageCreate', async function(message) {
         if (!userSettings[userId]) {
             userSettings[userId] = {
                 showThinkingProcess: false,
-                thinkingBudget: DEFAULT_THINKING_BUDGET
+                thinkingBudget: DEFAULT_THINKING_BUDGET,
+                thinkingBudgetEffort: 'medium'
             };
         }
 
@@ -513,6 +529,10 @@ client.on('messageCreate', async function(message) {
         const isExtendedThinking = forceExtendedThinking;
         const showThinkingProcess = userSettings[userId].showThinkingProcess;
         const thinkingBudget = userSettings[userId].thinkingBudget;
+        const enableReasoning = isExtendedThinking || showThinkingProcess;
+        const clampedThinkingBudget = Math.max(MIN_THINKING_BUDGET, Math.min(thinkingBudget || DEFAULT_THINKING_BUDGET, 32000));
+        const isOpenAIProvider = typeof selectedModel === 'string' && selectedModel.startsWith('openai/');
+        const isReasoningModel = await modelSupportsReasoning(selectedModel);
         
         // Create messages array with conversation history
         let messages = [...conversationHistory];
@@ -553,22 +573,76 @@ client.on('messageCreate', async function(message) {
             const toolsSupported = await modelSupportsTools(selectedModel);
             const openaiTools = toolsSupported ? toOpenAITools(TOOL_SCHEMAS) : undefined;
 
-            // Send a "Thinking..." message if extended thinking is enabled
+            // Send a "Thinking..." message while the model is generating
             let thinkingMessage = null;
             const startTime = Date.now();
-            
-            if (isExtendedThinking) {
-                thinkingMessage = await message.reply("Thinking...");
-            }
+            thinkingMessage = await message.reply("Thinking...");
             
             // Make the first API request
             let openaiMessages = [...openaiMessagesBase];
+            // Ensure there are enough tokens for content beyond reasoning (apply primarily to Anthropic-style reasoning.max_tokens)
+            const baseMaxTokens = isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS;
+            const requiredForContent = 2048; // leave room for the final answer
+            let computedMaxTokens = baseMaxTokens;
+            if (enableReasoning && !isOpenAIProvider) {
+                const minNeeded = clampedThinkingBudget + requiredForContent;
+                computedMaxTokens = Math.max(baseMaxTokens, Math.min(EXTENDED_THINKING_MAX_TOKENS, minNeeded));
+            }
+
+            const reasoningConfig = enableReasoning
+                ? (isOpenAIProvider
+                    ? { effort: ((complexity === 'very_complex' && isReasoningModel) ? 'high' : (userSettings[userId].thinkingBudgetEffort || 'medium')), exclude: !showThinkingProcess, enabled: true }
+                    : { max_tokens: clampedThinkingBudget, exclude: !showThinkingProcess, enabled: true })
+                : undefined;
+
+            // Per-request aggregates across all API calls in this request (initial + follow-ups)
+            let accumulatedReasoningTokens = 0;
+            let requestInputTokens = 0;
+            let requestOutputTokens = 0;
+            let requestCacheCreationInputTokens = 0;
+            let requestCacheReadInputTokens = 0;
+
+            const applyUsageFromResponse = (usage) => {
+                if (!usage) return;
+                const inputTokens = usage.prompt_tokens || 0;
+                const outputTokens = usage.completion_tokens || 0;
+                const reasoningTokens = usage.reasoning_tokens || 0;
+                const cacheCreation = usage.cache_creation_input_tokens || 0;
+                const cacheRead = usage.cache_read_input_tokens || 0;
+
+                // Aggregate for this request
+                requestInputTokens += inputTokens;
+                requestOutputTokens += outputTokens;
+                accumulatedReasoningTokens += reasoningTokens;
+                requestCacheCreationInputTokens += cacheCreation;
+                requestCacheReadInputTokens += cacheRead;
+
+                // Track standard input/output tokens for the selected model (lifetime)
+                if (!tokenTracking.modelUsage[selectedModel]) {
+                    tokenTracking.modelUsage[selectedModel] = { input: 0, output: 0 };
+                }
+                tokenTracking.modelUsage[selectedModel].input += inputTokens;
+                tokenTracking.modelUsage[selectedModel].output += outputTokens;
+
+                // Track cache usage if available (lifetime)
+                if (cacheCreation) {
+                    tokenTracking.lifetimeCacheCreationInputTokens += cacheCreation;
+                    tokenTracking.cacheMisses++;
+                }
+                if (cacheRead) {
+                    tokenTracking.lifetimeCacheReadInputTokens += cacheRead;
+                    tokenTracking.cacheHits++;
+                }
+            };
+
             let response = await callChat({
                 model: selectedModel,
-                max_tokens: isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS,
+                max_tokens: computedMaxTokens,
                 messages: openaiMessages,
-                tools: openaiTools
+                tools: openaiTools,
+                reasoning: reasoningConfig
             });
+            applyUsageFromResponse(response?.usage);
 
             // Process any tool calls
             let assistantMessage = response.choices?.[0]?.message;
@@ -671,86 +745,106 @@ client.on('messageCreate', async function(message) {
                 }
 
                 // Get model's response with the tool results
+                // Recompute tokens in case budget applies
+                const baseMaxTokens2 = isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS;
+                let computedMaxTokens2 = baseMaxTokens2;
+                if (enableReasoning && !isOpenAIProvider) {
+                    const minNeeded2 = clampedThinkingBudget + 2048;
+                    computedMaxTokens2 = Math.max(baseMaxTokens2, Math.min(EXTENDED_THINKING_MAX_TOKENS, minNeeded2));
+                }
+
+                const reasoningConfig2 = enableReasoning
+                    ? (isOpenAIProvider
+                        ? { effort: ((complexity === 'very_complex' && isReasoningModel) ? 'high' : (userSettings[userId].thinkingBudgetEffort || 'medium')), exclude: !showThinkingProcess, enabled: true }
+                        : { max_tokens: clampedThinkingBudget, exclude: !showThinkingProcess, enabled: true })
+                    : undefined;
+
                 response = await callChat({
                     model: selectedModel,
-                    max_tokens: isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS,
+                    max_tokens: computedMaxTokens2,
                     messages: openaiMessages,
-                    tools: openaiTools
+                    tools: openaiTools,
+                    reasoning: reasoningConfig2
                 });
+                applyUsageFromResponse(response?.usage);
 
                 assistantMessage = response.choices?.[0]?.message;
                 toolCalls = toolsSupported ? (assistantMessage?.tool_calls || []) : [];
             }
             
-            // Track token usage
-            if (response.usage) {
-                const inputTokens = response.usage.prompt_tokens || 0;
-                const outputTokens = response.usage.completion_tokens || 0;
-
-                // Track standard input/output tokens for the selected model
-                if (!tokenTracking.modelUsage[selectedModel]) {
-                    tokenTracking.modelUsage[selectedModel] = { input: 0, output: 0 };
-                }
-                tokenTracking.modelUsage[selectedModel].input += inputTokens;
-                tokenTracking.modelUsage[selectedModel].output += outputTokens;
-
-                // Thinking/tool-use tokens not available via OpenRouter reliably
-                const thinkingTokenCount = 0;
-                const toolUseTokenCount = 0;
-                
-                // Track cache usage if available
-                let cacheInfo = '';
-                if (response.usage.cache_creation_input_tokens) {
-                    tokenTracking.lifetimeCacheCreationInputTokens += response.usage.cache_creation_input_tokens;
-                    tokenTracking.cacheMisses++;
-                    cacheInfo = `, Cache: MISS (${response.usage.cache_creation_input_tokens} tokens)`;
-                }
-                if (response.usage.cache_read_input_tokens) {
-                    tokenTracking.lifetimeCacheReadInputTokens += response.usage.cache_read_input_tokens;
-                    tokenTracking.cacheHits++;
-                    cacheInfo = `, Cache: HIT (${response.usage.cache_read_input_tokens} tokens)`;
-                }
-                
-                // Calculate costs for this specific request
-                const modelCosts = MODEL_COSTS[selectedModel] || { input: 0, output: 0 };
-                const inputCost = (inputTokens / 1000000) * modelCosts.input;
-                const outputCost = (outputTokens / 1000000) * modelCosts.output;
-                const totalCost = inputCost + outputCost;
-                
-                console.log(`Token usage for ${selectedModel} - Input: ${inputTokens}, Output: ${outputTokens}${cacheInfo}`);
-                if (thinkingTokenCount > 0) {
-                    console.log(`Thinking tokens: ${thinkingTokenCount} (included in input tokens)`);
-                }
-                if (toolUseTokenCount > 0) {
-                    console.log(`Tool use tokens: ${toolUseTokenCount} (included in input tokens)`);
-                }
-                console.log(`Cost of this request: $${totalCost.toFixed(6)} ($${inputCost.toFixed(6)} for input, $${outputCost.toFixed(6)} for output)`);
-
-                const totalLifetimeInput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.input, 0);
-                const totalLifetimeOutput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.output, 0);
-                console.log(`Total lifetime tokens: ${totalLifetimeInput.toLocaleString()} input, ${totalLifetimeOutput.toLocaleString()} output`);
-                console.log(`Total lifetime thinking tokens: ${(tokenTracking.lifetimeThinkingTokens || 0).toLocaleString()}`);
-                console.log(`Total lifetime tool use tokens: ${(tokenTracking.lifetimeToolUseTokens || 0).toLocaleString()}`);
-                
-                // Save token data after each update
-                saveTokenData();
+            // Track token usage (aggregated across all calls in this request)
+            const thinkingTokenCount = accumulatedReasoningTokens || 0; // not always provided reliably
+            if (thinkingTokenCount > 0) {
+                tokenTracking.lifetimeThinkingTokens = (tokenTracking.lifetimeThinkingTokens || 0) + thinkingTokenCount;
             }
+
+            // Calculate costs for this specific request using aggregated counts
+            const modelCosts = MODEL_COSTS[selectedModel] || { input: 0, output: 0 };
+            const inputCost = (requestInputTokens / 1000000) * modelCosts.input;
+            const outputCost = (requestOutputTokens / 1000000) * modelCosts.output;
+            const totalCost = inputCost + outputCost;
+
+            // Cache info summary for this request
+            let cacheInfo = '';
+            if (requestCacheCreationInputTokens) {
+                cacheInfo += `, Cache: MISS (${requestCacheCreationInputTokens} tokens)`;
+            }
+            if (requestCacheReadInputTokens) {
+                cacheInfo += `, Cache: HIT (${requestCacheReadInputTokens} tokens)`;
+            }
+
+            console.log(`Token usage for ${selectedModel} (aggregated) - Input: ${requestInputTokens}, Output: ${requestOutputTokens}${cacheInfo}`);
+            if (thinkingTokenCount > 0) {
+                console.log(`Thinking tokens: ${thinkingTokenCount} (included in input tokens)`);
+            }
+            console.log(`Cost of this request: $${totalCost.toFixed(6)} ($${inputCost.toFixed(6)} for input, $${outputCost.toFixed(6)} for output)`);
+
+            const totalLifetimeInput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.input, 0);
+            const totalLifetimeOutput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.output, 0);
+            console.log(`Total lifetime tokens: ${totalLifetimeInput.toLocaleString()} input, ${totalLifetimeOutput.toLocaleString()} output`);
+            console.log(`Total lifetime thinking tokens: ${(tokenTracking.lifetimeThinkingTokens || 0).toLocaleString()}`);
+            console.log(`Total lifetime tool use tokens: ${(tokenTracking.lifetimeToolUseTokens || 0).toLocaleString()}`);
+
+            // Save token data after updates
+            saveTokenData();
             
             // Calculate thinking time if extended thinking was enabled
-            if (isExtendedThinking && thinkingMessage) {
+            if (thinkingMessage) {
                 const endTime = Date.now();
                 const thinkingTime = endTime - startTime;
-                const thinkingTimeInSeconds = (thinkingTime / 1000).toFixed(2);
-                await thinkingMessage.edit(`Done! Thinking completed in ${thinkingTimeInSeconds}s.`);
+                const thinkingTimeInSeconds = (thinkingTime / 1000).toFixed(3);
+                await thinkingMessage.edit(`Done! Thinking completed in ${thinkingTimeInSeconds}s`);
             }
 
             // Prepare final response text
             let finalResponse = assistantMessage?.content || '';
+            const reasoningText = (showThinkingProcess && assistantMessage && typeof assistantMessage.reasoning === 'string')
+                ? assistantMessage.reasoning
+                : '';
             if ((!finalResponse || finalResponse.trim() === '') && imageDescriptions) {
                 finalResponse = imageDescriptions;
             }
             if (!finalResponse || finalResponse.trim() === '') {
                 finalResponse = 'I encountered an issue processing your request. Please try again.';
+            }
+
+            // Send reasoning as a separate spoiler message first (if available)
+            if (reasoningText && reasoningText.trim().length > 0) {
+                const header = '🧠 Reasoning\n';
+                const fullReasoning = `${header}${reasoningText}`;
+                const baseParts = splitMessage(fullReasoning);
+                const maxPerMsg = MAX_MESSAGE_LENGTH - 4; // account for || ||
+                for (const base of baseParts) {
+                    if ((base.length + 4) <= MAX_MESSAGE_LENGTH) {
+                        await message.channel.send(`||${base}||`);
+                    } else {
+                        // Further split oversized part
+                        for (let start = 0; start < base.length; start += maxPerMsg) {
+                            const chunk = base.slice(start, start + maxPerMsg);
+                            await message.channel.send(`||${chunk}||`);
+                        }
+                    }
+                }
             }
 
             // Send the final response
@@ -848,10 +942,11 @@ client.on('interactionCreate', async interaction => {
     const { commandName, options, user } = interaction;
     
     // Initialize user settings if they don't exist
-    if (!userSettings[user.id]) {
+        if (!userSettings[user.id]) {
         userSettings[user.id] = {
             showThinkingProcess: false,
-            thinkingBudget: DEFAULT_THINKING_BUDGET
+                thinkingBudget: DEFAULT_THINKING_BUDGET,
+                thinkingBudgetEffort: 'medium'
         };
     }
     
@@ -864,19 +959,37 @@ client.on('interactionCreate', async interaction => {
                 ephemeral: true
             });
         } else if (commandName === 'thinking_budget') {
-            const budget = options.getInteger('budget');
-            if (budget < MIN_THINKING_BUDGET) {
-                await interaction.reply({
-                    content: `Thinking budget must be at least ${MIN_THINKING_BUDGET} tokens.`,
-                    ephemeral: true
-                });
+            // Accept either numeric token budget or effort string (low|medium|high)
+            const raw = options.getInteger('tokens');
+            const textEffort = options.getString('effort');
+            let replyText = '';
+
+            // Determine selected model context (approx): default to SMALLER_MODEL for display purposes
+            const isOpenAI = (SMALLER_MODEL.startsWith('openai/') || BIGGER_MODEL.startsWith('openai/'));
+
+            if (isOpenAI && textEffort) {
+                const effort = (textEffort || '').toLowerCase();
+                if (!['low','medium','high'].includes(effort)) {
+                    await interaction.reply({ content: 'For OpenAI models, thinking budget accepts one of: low, medium, high.', ephemeral: true });
+                    return;
+                }
+                userSettings[user.id].thinkingBudgetEffort = effort;
+                replyText = `Thinking budget set to effort: ${effort}.`;
+            } else if (!isOpenAI && typeof raw === 'number') {
+                if (raw < MIN_THINKING_BUDGET) {
+                    await interaction.reply({ content: `Thinking budget must be at least ${MIN_THINKING_BUDGET} tokens.`, ephemeral: true });
+                    return;
+                }
+                userSettings[user.id].thinkingBudget = Math.min(raw, 32000);
+                replyText = `Thinking budget set to ${userSettings[user.id].thinkingBudget} tokens.`;
             } else {
-                userSettings[user.id].thinkingBudget = budget;
-                await interaction.reply({
-                    content: `Thinking budget set to ${budget} tokens.`,
-                    ephemeral: true
-                });
+                // Fallback: try to parse a string argument from command text (if framework allows)
+                replyText = isOpenAI 
+                    ? 'For OpenAI models, use: /thinking_budget with low, medium, or high.'
+                    : `For non-OpenAI models, provide a number (>= ${MIN_THINKING_BUDGET}).`;
             }
+
+            await interaction.reply({ content: replyText, ephemeral: true });
         } else if (commandName === 'reset') {
             const isDM = interaction.channel.type === 1;
             const guildId = isDM ? null : interaction.guild.id;
@@ -943,14 +1056,13 @@ client.on('interactionCreate', async interaction => {
                     { name: 'Extended Max Tokens', value: EXTENDED_THINKING_MAX_TOKENS.toString(), inline: true },
                     { name: 'Automatic Thinking Mode', value: 'Enabled for very complex prompts', inline: false },
                     { name: 'Show Thinking Process', value: userSettings[user.id].showThinkingProcess ? 'ON' : 'OFF', inline: true },
-                    { name: 'Thinking Budget', value: userSettings[user.id].thinkingBudget.toString(), inline: true }
+                    { name: 'Thinking Budget', value: (SMALLER_MODEL.startsWith('openai/') || BIGGER_MODEL.startsWith('openai/')) ? (userSettings[user.id].thinkingBudgetEffort || 'medium') : userSettings[user.id].thinkingBudget.toString(), inline: true }
                 );
                 
             // Add token usage fields if the user is the bot creator
             if (isBotOwner) {
                 const usageDetails = Object.entries(tokenTracking.modelUsage).map(([model, usage]) => {
-                    const modelName = model.split('-').slice(0, 2).join('-'); // Make model name shorter
-                    return `**${modelName}**: ${usage.input.toLocaleString()} in, ${usage.output.toLocaleString()} out`;
+                    return `**${model}**: ${usage.input.toLocaleString()} in, ${usage.output.toLocaleString()} out`;
                 }).join('\n');
 
                 statusEmbed.addFields(

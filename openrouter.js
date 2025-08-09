@@ -31,7 +31,7 @@ function toOpenAITools(tools) {
   }));
 }
 
-async function callChat({ model, messages, tools, max_tokens }) {
+async function callChat({ model, messages, tools, max_tokens, reasoning }) {
   if (!OPENROUTER_API_KEY) {
     throw new Error('OPENROUTER_API_KEY is not set');
   }
@@ -46,7 +46,8 @@ async function callChat({ model, messages, tools, max_tokens }) {
     model,
     messages,
     ...(tools && tools.length ? { tools } : {}),
-    ...(max_tokens ? { max_tokens } : {})
+    ...(max_tokens ? { max_tokens } : {}),
+    ...(reasoning ? { reasoning } : {})
   };
 
   const res = await fetch(OPENROUTER_ENDPOINT, {
@@ -92,5 +93,31 @@ async function modelSupportsTools(modelId) {
 }
 
 module.exports.modelSupportsTools = modelSupportsTools;
+
+// Cache for reasoning parameter support checks per model
+const reasoningSupportCache = new Map();
+
+async function modelSupportsReasoning(modelId) {
+  if (!modelId) return false;
+  if (reasoningSupportCache.has(modelId)) return reasoningSupportCache.get(modelId);
+  try {
+    const [author, ...rest] = String(modelId).split('/');
+    const slug = rest.join('/');
+    if (!author || !slug) throw new Error('invalid model id');
+    const url = `https://openrouter.ai/api/v1/models/${encodeURIComponent(author)}/${encodeURIComponent(slug)}/endpoints`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const data = await res.json();
+    const endpoints = data?.data?.endpoints || [];
+    const supported = endpoints.some((ep) => Array.isArray(ep.supported_parameters) && ep.supported_parameters.includes('reasoning'));
+    reasoningSupportCache.set(modelId, supported);
+    return supported;
+  } catch (_) {
+    reasoningSupportCache.set(modelId, false);
+    return false;
+  }
+}
+
+module.exports.modelSupportsReasoning = modelSupportsReasoning;
 
 

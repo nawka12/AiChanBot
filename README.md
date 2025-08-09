@@ -1,15 +1,20 @@
 # AiChanBot
-A Discord bot using OpenRouter to access Anthropic Claude models, featuring automatic complexity detection and comprehensive tool integration.
+A Discord bot using OpenRouter to access LLM models, featuring automatic complexity detection and comprehensive tool integration.
 
 ## Features
 
 ### 🤖 **Intelligent Model Selection**
-- **Smaller Model** (`anthropic/claude-3.5-haiku`): Fast responses for simple queries
-- **Bigger Model** (`anthropic/claude-sonnet-4`): Advanced reasoning for complex problems
-- **Automatic Complexity Detection**: Bot automatically chooses the right model based on your query complexity
+- **Smaller Model** (default to `openai/gpt-5-nano`): Fast responses for simple queries
+- **Bigger Model** (default to `openai/gpt-5-mini`): Advanced reasoning for complex problems
+- **Automatic Complexity Detection**: Bot automatically chooses the right model based on your query complexity (configurable separate complexity model via `OPENROUTER_MODEL_COMPLEXITY`)
 
-### 🧠 **Thinking Mode**
-- Optional thinking indicator. Note: OpenRouter does not expose Anthropic's hidden reasoning tokens.
+### 🧠 **Reasoning Tokens & Thinking Mode**
+- Unified reasoning control via OpenRouter `reasoning` parameter (effort/budget/exclusion)
+- Toggle visibility with `/thinking_process on|off`
+- Configure reasoning budget with `/thinking_budget <tokens>` (min 1024, capped to 32000)
+- Reasoning text is shown when enabled and the model provides it
+  - Some models may not return reasoning tokens
+  - Reasoning tokens count towards output usage and billing
 
 ### 🛠️ **Tool Integration**
 The model can call tools automatically - no special commands needed:
@@ -49,11 +54,13 @@ The model can call tools automatically - no special commands needed:
 
 ```json
 {
-  "discord.js": "^14.x",
-  "node-fetch": "^2.x",
-  "dotenv": "latest",
-  "axios": "latest",
-  "cheerio": "latest"
+  "dependencies": {
+    "discord.js": "^14.8.0",
+    "node-fetch": "^2.7.0",
+    "dotenv": "^16.0.3",
+    "axios": "^1.8.1",
+    "cheerio": "^1.0.0"
+  }
 }
 ```
 
@@ -64,6 +71,9 @@ Create a `.env` file in the root directory:
 ```env
 DISCORD_TOKEN=your_discord_bot_token
 OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_MODEL_SMALLER=openai/gpt-5-nano
+OPENROUTER_MODEL_BIGGER=your_chosen
+OPENROUTER_MODEL_COMPLEXITY=openai/gpt-5-mini  # optional model dedicated for complexity checks
 BOT_CREATOR_ID=your_discord_user_id
 ```
 
@@ -82,12 +92,25 @@ BOT_CREATOR_ID=your_discord_user_id
 ### SearxNG Setup
 Refer to [SearxNG docker GitHub page](https://github.com/searxng/searxng-docker) for easy Docker installation.
 
+### Web Search Configuration
+- The `web_search` tool requires a running SearxNG instance.
+- Default endpoint is `http://127.0.0.1:8080` configured in `searchlogic.js` (`baseUrl`). Change it if your SearxNG runs elsewhere.
+
+```js
+// searchlogic.js
+const baseUrl = 'http://127.0.0.1:8080/search?q=';
+```
+
+### Twitter/X Support
+- Twitter/X links are handled via public Nitter mirrors in `nitter_tool.js` (no API keys needed).
+- Availability depends on working Nitter instances and CORS proxies; occasional failures are expected.
+
 ### Bot Installation
 
 ```bash
 git clone https://github.com/nawka12/AiChanBot
 cd AiChanBot
-git checkout claude
+git checkout openrouter
 npm install
 node index.js
 ```
@@ -109,7 +132,9 @@ pm2 save
 
 ### Slash Commands
 - `/thinking_process on|off` - Toggle thinking process display
-- `/thinking_budget <number>` - Set thinking token budget (min 1024)
+- `/thinking_budget <tokens|effort>`
+  - For OpenAI models: use `effort` = `low`, `medium`, or `high`
+  - For non-OpenAI models: set token budget (min 1024, max 32000)
 - `/reset` - Reset conversation history
 - `/status` - View bot configuration and usage statistics
 - `/reset_tokens` - Reset token statistics (creator only)
@@ -148,14 +173,17 @@ pm2 save
 
 ### Model Costs (per million tokens)
 - Note: Values are examples used for cost display and may not reflect real-time pricing.
-- **Bigger**: $3.00 input / $15.00 output
-- **Smaller**: $0.80 input / $4.00 output
+- **Bigger**: $0.25 input / $2.00 output
+- **Smaller**: $0.05 input / $0.40 output
 
 ### Security Features
 - Bot creator privilege system
 - Safe content handling
 - Error recovery and graceful degradation
-- Automatic token data persistence
+- Automatic token data persistence (stored in `token_data.json`)
+
+### Time & Locale
+- All dates/times displayed by the bot use Asia/Jakarta (GMT+7).
 
 ## Contributing
 
@@ -178,4 +206,4 @@ Created by **kayfahaarukku**
 
 ---
 
-*Last updated: June 2025*
+*Last updated: Aug 2025*
