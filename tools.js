@@ -639,7 +639,7 @@ async function executeToolCalls(toolCalls) {
                   } else {
                     const noteList = noteKeys.map(key => ({
                       key,
-                      content_preview: notes[key].content.substring(0, 100) + (notes[key].content.length > 100 ? '...' : ''),
+                      content: notes[key].content, // Show full content instead of truncated preview
                       tags: notes[key].tags || [],
                       created_at: notes[key].created_at,
                       updated_at: notes[key].updated_at
@@ -674,7 +674,7 @@ async function executeToolCalls(toolCalls) {
                       if (searchableText.includes(searchQuery)) {
                         searchResults.push({
                           key: noteKey,
-                          content_preview: note.content.substring(0, 200) + (note.content.length > 200 ? '...' : ''),
+                          content: note.content, // Show full content instead of truncated preview
                           tags: note.tags || [],
                           created_at: note.created_at,
                           updated_at: note.updated_at

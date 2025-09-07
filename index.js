@@ -85,8 +85,8 @@ const getNoteContext = (userId, guildId = null) => {
     let context = '\n\n**Your Notes:**\n';
     for (const [key, note] of Object.entries(allNotes)) {
         const tags = note.tags && note.tags.length > 0 ? ` [${note.tags.join(', ')}]` : '';
-        const preview = note.content.length > 100 ? note.content.substring(0, 100) + '...' : note.content;
-        context += `- **${key}**${tags}: ${preview}\n`;
+        // Show full content instead of truncated preview to ensure model can read complete notes
+        context += `- **${key}**${tags}: ${note.content}\n`;
     }
 
     return context;
