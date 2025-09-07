@@ -38,10 +38,11 @@ The model can call tools automatically - no special commands needed:
 
 ### 📊 **Comprehensive Analytics**
 - Detailed token usage tracking per model
-- Real-time cost calculation
+- Real-time cost calculation with configurable pricing
 - Cache performance monitoring (hits/misses)
 - Thinking and tool usage token tracking
 - Average token usage per message statistics
+- Environment variable cost overrides for accurate billing
 
 ### ⚙️ **User Customization**
 - `/thinking_process` - Toggle display of thinking process
@@ -69,17 +70,44 @@ The model can call tools automatically - no special commands needed:
 Create a `.env` file in the root directory:
 
 ```env
+# Required Configuration
 DISCORD_TOKEN=your_discord_bot_token
 OPENROUTER_API_KEY=your_openrouter_api_key
+
+# Model Selection (Optional - defaults shown)
 OPENROUTER_MODEL_SMALLER=openai/gpt-5-nano
-OPENROUTER_MODEL_BIGGER=your_chosen
+OPENROUTER_MODEL_BIGGER=openai/gpt-5-mini
 OPENROUTER_MODEL_COMPLEXITY=openai/gpt-5-mini  # optional model dedicated for complexity checks
+
+# Model Cost Overrides (Optional - per million tokens)
+MODEL_SMALLER_COST_IN=0.05      # Smaller model input cost
+MODEL_SMALLER_COST_OUT=0.4      # Smaller model output cost
+MODEL_BIGGER_COST_IN=0.25       # Bigger model input cost
+MODEL_BIGGER_COST_OUT=2.0       # Bigger model output cost
+MODEL_COMPLEXITY_IN=0.10        # Complexity model input cost
+MODEL_COMPLEXITY_OUT=0.4        # Complexity model output cost
+
+# Admin Configuration (Optional)
 BOT_CREATOR_ID=your_discord_user_id
 ```
 
 **Environment Variables:**
+
+**Required:**
 - `DISCORD_TOKEN`: Your Discord bot token from the Discord Developer Portal
 - `OPENROUTER_API_KEY`: Your OpenRouter API key
+
+**Model Configuration:**
+- `OPENROUTER_MODEL_SMALLER`: Model used for simple queries (default: `openai/gpt-5-nano`)
+- `OPENROUTER_MODEL_BIGGER`: Model used for complex queries (default: `openai/gpt-5-mini`)
+- `OPENROUTER_MODEL_COMPLEXITY`: Model used for complexity detection (default: uses smaller model)
+
+**Cost Configuration:**
+- `MODEL_SMALLER_COST_IN/OUT`: Override costs for smaller model (per million tokens)
+- `MODEL_BIGGER_COST_IN/OUT`: Override costs for bigger model (per million tokens)
+- `MODEL_COMPLEXITY_IN/OUT`: Override costs for complexity model (per million tokens)
+
+**Admin Features:**
 - `BOT_CREATOR_ID`: (Optional) Your Discord user ID for admin features. Enable Developer Mode in Discord (Settings > Advanced > Developer Mode), then right-click your username and select "Copy ID"
 
 ## Installation
@@ -169,12 +197,16 @@ pm2 save
 
 ### Token Management
 - Real-time token usage tracking per model
-- Automatic cost calculation (pricing values in code)
+- Automatic cost calculation with configurable pricing
+- Cost tracking includes thinking tokens and tool usage
 
 ### Model Costs (per million tokens)
-- Note: Values are examples used for cost display and may not reflect real-time pricing.
-- **Bigger**: $0.25 input / $2.00 output
-- **Smaller**: $0.05 input / $0.40 output
+- **Configurable via environment variables** - see Model Cost Overrides above
+- **Default costs:**
+  - **Bigger Model**: $0.25 input / $2.00 output
+  - **Smaller Model**: $0.05 input / $0.40 output
+  - **Complexity Model**: $0.10 input / $0.40 output
+- Note: Update these values in your `.env` file to match current OpenRouter pricing
 
 ### Security Features
 - Bot creator privilege system
@@ -206,4 +238,4 @@ Created by **kayfahaarukku**
 
 ---
 
-*Last updated: Aug 2025*
+*Last updated: Sept 2025*

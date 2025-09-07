@@ -7,9 +7,18 @@ const DEFAULT_MODELS = {
 };
 
 const MODEL_COSTS = {
-  [DEFAULT_MODELS.BIGGER_MODEL]: { input: 0.25, output: 2.0 },
-  [DEFAULT_MODELS.SMALLER_MODEL]: { input: 0.05, output: 0.4 },
-  [DEFAULT_MODELS.COMPLEXITY_MODEL]: { input: 0.10, output: 0.4 },
+  [DEFAULT_MODELS.BIGGER_MODEL]: { 
+    input: process.env.MODEL_BIGGER_COST_IN ? parseFloat(process.env.MODEL_BIGGER_COST_IN) : 0.25, 
+    output: process.env.MODEL_BIGGER_COST_OUT ? parseFloat(process.env.MODEL_BIGGER_COST_OUT) : 2.0 
+  },
+  [DEFAULT_MODELS.SMALLER_MODEL]: { 
+    input: process.env.MODEL_SMALLER_COST_IN ? parseFloat(process.env.MODEL_SMALLER_COST_IN) : 0.05, 
+    output: process.env.MODEL_SMALLER_COST_OUT ? parseFloat(process.env.MODEL_SMALLER_COST_OUT) : 0.4 
+  },
+  [DEFAULT_MODELS.COMPLEXITY_MODEL]: { 
+    input: process.env.MODEL_COMPLEXITY_IN ? parseFloat(process.env.MODEL_COMPLEXITY_IN) : 0.10, 
+    output: process.env.MODEL_COMPLEXITY_OUT ? parseFloat(process.env.MODEL_COMPLEXITY_OUT) : 0.4 
+  },
 };
 
 function getModels() {
@@ -21,7 +30,21 @@ function getModels() {
 }
 
 function getModelCosts() {
-  return MODEL_COSTS;
+  // Rebuild costs from current environment variables to handle runtime changes
+  return {
+    [DEFAULT_MODELS.BIGGER_MODEL]: { 
+      input: process.env.MODEL_BIGGER_COST_IN ? parseFloat(process.env.MODEL_BIGGER_COST_IN) : 0.25, 
+      output: process.env.MODEL_BIGGER_COST_OUT ? parseFloat(process.env.MODEL_BIGGER_COST_OUT) : 2.0 
+    },
+    [DEFAULT_MODELS.SMALLER_MODEL]: { 
+      input: process.env.MODEL_SMALLER_COST_IN ? parseFloat(process.env.MODEL_SMALLER_COST_IN) : 0.05, 
+      output: process.env.MODEL_SMALLER_COST_OUT ? parseFloat(process.env.MODEL_SMALLER_COST_OUT) : 0.4 
+    },
+    [DEFAULT_MODELS.COMPLEXITY_MODEL]: { 
+      input: process.env.MODEL_COMPLEXITY_IN ? parseFloat(process.env.MODEL_COMPLEXITY_IN) : 0.10, 
+      output: process.env.MODEL_COMPLEXITY_OUT ? parseFloat(process.env.MODEL_COMPLEXITY_OUT) : 0.4 
+    },
+  };
 }
 
 function selectModelByComplexity(complexity) {

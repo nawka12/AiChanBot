@@ -11,6 +11,9 @@ yarn-error.log*
 # Environment variables
 .env
 
+# User data
+notes/
+
 # IDE specific files
 .idea
 .vscode

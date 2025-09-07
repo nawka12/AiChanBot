@@ -1,6 +1,8 @@
 const { searchQuery } = require('./searchlogic.js');
 const { scrapeUrl, scrapeMultipleUrls } = require('./scraper.js');
 const { getTweets, getTweetByUrl, isTwitterUrl } = require('./nitter_tool.js');
+const fs = require('fs');
+const path = require('path');
 
 /**
  * Tools implementation for Claude API integration
@@ -8,6 +10,125 @@ const { getTweets, getTweetByUrl, isTwitterUrl } = require('./nitter_tool.js');
  */
 
 const MAX_SEARCH_RESULTS = 3;
+
+// Notes system constants
+const NOTES_DIR = path.join(__dirname, 'notes');
+const USERS_DIR = path.join(NOTES_DIR, 'users');
+const GUILDS_DIR = path.join(NOTES_DIR, 'guilds');
+
+/**
+ * Helper function to get note file path
+ * @param {string} userId - User ID for user notes
+ * @param {string} guildId - Guild ID for guild notes (optional)
+ * @returns {string} File path for the note data
+ */
+function getNoteFilePath(userId, guildId = null) {
+  if (guildId) {
+    return path.join(GUILDS_DIR, `${guildId}.json`);
+  } else {
+    return path.join(USERS_DIR, `${userId}.json`);
+  }
+}
+
+/**
+ * Helper function to load notes from file
+ * @param {string} filePath - Path to the note file
+ * @returns {Object} Note data or empty object if file doesn't exist
+ */
+function loadNotes(filePath) {
+  try {
+    if (fs.existsSync(filePath)) {
+      const data = fs.readFileSync(filePath, 'utf8');
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.error(`Error loading notes from ${filePath}:`, error);
+  }
+  return {};
+}
+
+/**
+ * Helper function to save notes to file
+ * @param {string} filePath - Path to the note file
+ * @param {Object} notes - Note data to save
+ */
+function saveNotes(filePath, notes) {
+  try {
+    // Ensure directory exists
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    fs.writeFileSync(filePath, JSON.stringify(notes, null, 2), 'utf8');
+  } catch (error) {
+    console.error(`Error saving notes to ${filePath}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Helper function to validate note data
+ * @param {string} key - Note key
+ * @param {string} content - Note content
+ * @param {Array} tags - Note tags (optional)
+ * @returns {Object} Validation result with isValid and error message
+ */
+function validateNote(key, content, tags = []) {
+  if (!key || typeof key !== 'string' || key.trim().length === 0) {
+    return { isValid: false, error: 'Note key cannot be empty' };
+  }
+
+  if (key.length > 100) {
+    return { isValid: false, error: 'Note key cannot exceed 100 characters' };
+  }
+
+  if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    return { isValid: false, error: 'Note content cannot be empty' };
+  }
+
+  if (content.length > 10000) {
+    return { isValid: false, error: 'Note content cannot exceed 10,000 characters' };
+  }
+
+  // Check for invalid characters in key
+  if (!/^[a-zA-Z0-9_-]+$/.test(key)) {
+    return { isValid: false, error: 'Note key can only contain letters, numbers, underscores, and hyphens' };
+  }
+
+  // Validate tags if provided
+  if (tags && Array.isArray(tags)) {
+    for (const tag of tags) {
+      if (typeof tag !== 'string' || tag.trim().length === 0) {
+        return { isValid: false, error: 'Tags must be non-empty strings' };
+      }
+      if (tag.length > 50) {
+        return { isValid: false, error: 'Each tag cannot exceed 50 characters' };
+      }
+    }
+  }
+
+  return { isValid: true };
+}
+
+/**
+ * Helper function to ensure notes directories exist
+ */
+function ensureNotesDirectories() {
+  try {
+    if (!fs.existsSync(NOTES_DIR)) {
+      fs.mkdirSync(NOTES_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(USERS_DIR)) {
+      fs.mkdirSync(USERS_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(GUILDS_DIR)) {
+      fs.mkdirSync(GUILDS_DIR, { recursive: true });
+    }
+  } catch (error) {
+    console.error('Error creating notes directories:', error);
+  }
+}
 
 // Tool schemas
 const TOOL_SCHEMAS = [
@@ -86,6 +207,45 @@ const TOOL_SCHEMAS = [
         }
       },
       required: ["url"]
+    }
+  },
+  {
+    name: "note",
+    description: "Manage personal or guild notes as a persistent knowledge base. CRITICAL SCOPING RULES: 'user' scope ONLY works in DMs (private messages), 'guild' scope ONLY works in the specific guild where the command is used. User notes are completely isolated from guild contexts and vice versa.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["save", "get", "list", "search", "delete", "delete_all"],
+          description: "Action to perform: save (create/update note), get (retrieve note), list (show all notes), search (find notes by content/tags), delete (remove note), delete_all (remove all notes)"
+        },
+        key: {
+          type: "string",
+          description: "Note identifier (required for save, get, delete). Max 100 chars, alphanumeric + underscore/hyphen only."
+        },
+        content: {
+          type: "string",
+          description: "Note content (required for save). Can include rich text, links, and structured information. Max 10,000 characters."
+        },
+        tags: {
+          type: "array",
+          items: {
+            type: "string"
+          },
+          description: "Optional tags for organizing notes (array of strings)"
+        },
+        query: {
+          type: "string",
+          description: "Search query (required for search action). Searches note keys, content, and tags."
+        },
+        scope: {
+          type: "string",
+          enum: ["user", "guild"],
+          description: "SCOPE RESTRICTIONS: 'user' = personal notes accessible ONLY in DMs/private messages. 'guild' = server notes accessible ONLY in the specific guild where saved. Cross-context access is NOT allowed."
+        }
+      },
+      required: ["action", "scope"]
     }
   }
 ];
@@ -347,10 +507,266 @@ async function executeToolCalls(toolCalls) {
           };
         }
       }
+      else if (name === "note") {
+        try {
+          const { action, key, content, tags, scope } = input;
+
+          // Validate scope
+          if (!['user', 'guild'].includes(scope)) {
+            result = {
+              error: "Invalid scope. Must be 'user' or 'guild'",
+              action,
+              scope
+            };
+          } else {
+            // Get context from the tool input (passed from main handler)
+            const userId = input.userId;
+            const guildId = scope === 'guild' ? input.guildId : null;
+
+            // Validate that we have the required context
+            if (!userId) {
+              result = {
+                error: "Missing user context. Cannot access notes without user information.",
+                action,
+                scope
+              };
+            } else if (scope === 'guild' && !guildId) {
+              // Do NOT fallback to user notes when guild scope is requested
+              result = {
+                error: "Guild scope requires a valid guildId. Note was not saved.",
+                action,
+                scope
+              };
+            } else if (scope === 'user' && input.guildId) {
+              // Prevent user notes in guild context
+              result = {
+                error: "User notes can only be accessed in DMs (private messages). Use scope 'guild' for server notes.",
+                action,
+                scope,
+                hint: "User notes are private and only accessible in direct messages. For server-wide notes, use scope 'guild'."
+              };
+            } else if (scope === 'guild' && !input.guildId) {
+              // Prevent guild notes in DM context  
+              result = {
+                error: "Guild notes can only be accessed within a server. Use scope 'user' for personal notes in DMs.",
+                action,
+                scope,
+                hint: "Guild notes are server-specific and only accessible within that server. For personal notes in DMs, use scope 'user'."
+              };
+            } else {
+              // Ensure directories exist
+              ensureNotesDirectories();
+
+              const filePath = getNoteFilePath(userId, guildId);
+              let notes = loadNotes(filePath);
+
+              switch (action) {
+                case 'save':
+                  if (!key || !content) {
+                    result = {
+                      error: "Both 'key' and 'content' are required for save action",
+                      action,
+                      scope
+                    };
+                  } else {
+                    const validation = validateNote(key, content, tags);
+                    if (!validation.isValid) {
+                      result = {
+                        error: validation.error,
+                        action,
+                        scope,
+                        key
+                      };
+                    } else {
+                      notes[key] = {
+                        content: content.trim(),
+                        tags: tags || [],
+                        created_at: notes[key]?.created_at || new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                      };
+                      saveNotes(filePath, notes);
+                      result = {
+                        success: true,
+                        action: 'save',
+                        scope,
+                        key,
+                        message: `Note '${key}' saved successfully`
+                      };
+                    }
+                  }
+                  break;
+
+                case 'get':
+                  if (!key) {
+                    result = {
+                      error: "'key' is required for get action",
+                      action,
+                      scope
+                    };
+                  } else if (!notes[key]) {
+                    result = {
+                      error: `Note '${key}' not found`,
+                      action,
+                      scope,
+                      key,
+                      available_keys: Object.keys(notes)
+                    };
+                  } else {
+                    result = {
+                      success: true,
+                      action: 'get',
+                      scope,
+                      key,
+                      content: notes[key].content,
+                      tags: notes[key].tags || [],
+                      created_at: notes[key].created_at,
+                      updated_at: notes[key].updated_at
+                    };
+                  }
+                  break;
+
+                case 'list':
+                  const noteKeys = Object.keys(notes);
+                  if (noteKeys.length === 0) {
+                    result = {
+                      success: true,
+                      action: 'list',
+                      scope,
+                      count: 0,
+                      notes: [],
+                      message: `No ${scope} notes found`
+                    };
+                  } else {
+                    const noteList = noteKeys.map(key => ({
+                      key,
+                      content_preview: notes[key].content.substring(0, 100) + (notes[key].content.length > 100 ? '...' : ''),
+                      tags: notes[key].tags || [],
+                      created_at: notes[key].created_at,
+                      updated_at: notes[key].updated_at
+                    }));
+                    result = {
+                      success: true,
+                      action: 'list',
+                      scope,
+                      count: noteKeys.length,
+                      notes: noteList
+                    };
+                  }
+                  break;
+
+                case 'search':
+                  const query = input.query || '';
+                  if (!query.trim()) {
+                    result = {
+                      error: "Search query is required for search action",
+                      action,
+                      scope
+                    };
+                  } else {
+                    const noteKeys = Object.keys(notes);
+                    const searchResults = [];
+
+                    for (const noteKey of noteKeys) {
+                      const note = notes[noteKey];
+                      const searchableText = `${noteKey} ${note.content} ${note.tags?.join(' ') || ''}`.toLowerCase();
+                      const searchQuery = query.toLowerCase();
+
+                      if (searchableText.includes(searchQuery)) {
+                        searchResults.push({
+                          key: noteKey,
+                          content_preview: note.content.substring(0, 200) + (note.content.length > 200 ? '...' : ''),
+                          tags: note.tags || [],
+                          created_at: note.created_at,
+                          updated_at: note.updated_at
+                        });
+                      }
+                    }
+
+                    result = {
+                      success: true,
+                      action: 'search',
+                      scope,
+                      query,
+                      count: searchResults.length,
+                      notes: searchResults
+                    };
+                  }
+                  break;
+
+                case 'delete':
+                  if (!key) {
+                    result = {
+                      error: "'key' is required for delete action",
+                      action,
+                      scope
+                    };
+                  } else if (!notes[key]) {
+                    result = {
+                      error: `Note '${key}' not found`,
+                      action,
+                      scope,
+                      key,
+                      available_keys: Object.keys(notes)
+                    };
+                  } else {
+                    delete notes[key];
+                    saveNotes(filePath, notes);
+                    result = {
+                      success: true,
+                      action: 'delete',
+                      scope,
+                      key,
+                      message: `Note '${key}' deleted successfully`
+                    };
+                  }
+                  break;
+
+                case 'delete_all':
+                  const noteCount = Object.keys(notes).length;
+                  if (noteCount === 0) {
+                    result = {
+                      error: `No ${scope} notes to delete`,
+                      action,
+                      scope
+                    };
+                  } else {
+                    // Clear all notes
+                    const emptyNotes = {};
+                    saveNotes(filePath, emptyNotes);
+                    result = {
+                      success: true,
+                      action: 'delete_all',
+                      scope,
+                      deleted_count: noteCount,
+                      message: `All ${noteCount} ${scope} notes deleted successfully`
+                    };
+                  }
+                  break;
+
+                default:
+                  result = {
+                    error: `Unknown action: ${action}`,
+                    action,
+                    scope,
+                    available_actions: ['save', 'get', 'list', 'search', 'delete', 'delete_all']
+                  };
+              }
+            }
+          }
+        } catch (noteError) {
+          console.error(`Note tool error:`, noteError);
+          result = {
+            error: `Note operation failed: ${noteError.message}`,
+            action: input.action,
+            scope: input.scope,
+            suggestion: "There was an issue with the notes system. Please try again."
+          };
+        }
+      }
       else {
-        result = { 
+        result = {
           error: `Unknown tool: ${name}`,
-          suggestion: "Please use one of the available tools: web_search, web_scrape, multi_scrape, nitter_tweets, or tweet_url_scrape." 
+          suggestion: "Please use one of the available tools: web_search, web_scrape, multi_scrape, nitter_tweets, tweet_url_scrape, or note."
         };
       }
     } catch (error) {

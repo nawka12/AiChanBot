@@ -45,12 +45,64 @@ const startupTime = new Date();
 // Define token data file path
 const TOKEN_DATA_FILE = path.join(__dirname, 'token_data.json');
 
+// Define notes directories
+const NOTES_DIR = path.join(__dirname, 'notes');
+const USERS_DIR = path.join(NOTES_DIR, 'users');
+const GUILDS_DIR = path.join(NOTES_DIR, 'guilds');
+
+// Notes helper functions
+const getNoteFilePath = (userId, guildId = null) => {
+    if (guildId) {
+        return path.join(GUILDS_DIR, `${guildId}.json`);
+    } else {
+        return path.join(USERS_DIR, `${userId}.json`);
+    }
+};
+
+const loadNotes = (filePath) => {
+    try {
+        if (fs.existsSync(filePath)) {
+            const data = fs.readFileSync(filePath, 'utf8');
+            return JSON.parse(data);
+        }
+    } catch (error) {
+        console.error(`Error loading notes from ${filePath}:`, error);
+    }
+    return {};
+};
+
+const getNoteContext = (userId, guildId = null) => {
+    const userNotes = loadNotes(getNoteFilePath(userId));
+    const guildNotes = guildId ? loadNotes(getNoteFilePath(userId, guildId)) : {};
+
+    // Combine notes
+    const allNotes = { ...userNotes, ...guildNotes };
+
+    if (Object.keys(allNotes).length === 0) {
+        return '';
+    }
+
+    let context = '\n\n**Your Notes:**\n';
+    for (const [key, note] of Object.entries(allNotes)) {
+        const tags = note.tags && note.tags.length > 0 ? ` [${note.tags.join(', ')}]` : '';
+        const preview = note.content.length > 100 ? note.content.substring(0, 100) + '...' : note.content;
+        context += `- **${key}**${tags}: ${preview}\n`;
+    }
+
+    return context;
+};
+
 // Add token tracking variables
 let tokenTracking = {
     modelUsage: {
         [BIGGER_MODEL]: { input: 0, output: 0 },
         [SMALLER_MODEL]: { input: 0, output: 0 },
         [COMPLEXITY_CHECK_MODEL]: { input: 0, output: 0 }
+    },
+    modelCosts: {
+        [BIGGER_MODEL]: MODEL_COSTS[BIGGER_MODEL] ? { ...MODEL_COSTS[BIGGER_MODEL] } : { input: 0, output: 0 },
+        [SMALLER_MODEL]: MODEL_COSTS[SMALLER_MODEL] ? { ...MODEL_COSTS[SMALLER_MODEL] } : { input: 0, output: 0 },
+        [COMPLEXITY_CHECK_MODEL]: MODEL_COSTS[COMPLEXITY_CHECK_MODEL] ? { ...MODEL_COSTS[COMPLEXITY_CHECK_MODEL] } : { input: 0, output: 0 }
     },
     lifetimeCacheCreationInputTokens: 0,
     lifetimeCacheReadInputTokens: 0,
@@ -59,6 +111,20 @@ let tokenTracking = {
     cacheHits: 0,
     cacheMisses: 0,
     trackingSince: new Date().toISOString() // Add tracking start date
+};
+
+// Function to get model costs for a specific model - checks token_data first, then falls back to MODEL_COSTS
+const getCostForModel = (modelName) => {
+    // First check if costs are defined in token_data.json
+    if (tokenTracking.modelCosts && tokenTracking.modelCosts[modelName]) {
+        return tokenTracking.modelCosts[modelName];
+    }
+    // Fall back to MODEL_COSTS from modelConfig.js
+    if (MODEL_COSTS[modelName]) {
+        return MODEL_COSTS[modelName];
+    }
+    // Default fallback
+    return { input: 0, output: 0 };
 };
 
 // Function to save token tracking data
@@ -85,7 +151,15 @@ try {
                     input: loadedData.lifetimeInputTokens || 0,
                     output: loadedData.lifetimeOutputTokens || 0
                 },
-                [SMALLER_MODEL]: { input: 0, output: 0 }
+                [SMALLER_MODEL]: { input: 0, output: 0 },
+                [COMPLEXITY_CHECK_MODEL]: { input: 0, output: 0 }
+            };
+
+            // Initialize modelCosts with current MODEL_COSTS values
+            tokenTracking.modelCosts = {
+                [BIGGER_MODEL]: MODEL_COSTS[BIGGER_MODEL] ? { ...MODEL_COSTS[BIGGER_MODEL] } : { input: 0, output: 0 },
+                [SMALLER_MODEL]: MODEL_COSTS[SMALLER_MODEL] ? { ...MODEL_COSTS[SMALLER_MODEL] } : { input: 0, output: 0 },
+                [COMPLEXITY_CHECK_MODEL]: MODEL_COSTS[COMPLEXITY_CHECK_MODEL] ? { ...MODEL_COSTS[COMPLEXITY_CHECK_MODEL] } : { input: 0, output: 0 }
             };
 
             // Copy other fields
@@ -96,7 +170,7 @@ try {
             tokenTracking.cacheHits = loadedData.cacheHits || 0;
             tokenTracking.cacheMisses = loadedData.cacheMisses || 0;
             tokenTracking.trackingSince = loadedData.trackingSince || new Date().toISOString();
-            
+
             console.log('Migration complete. Saving in new format.');
             saveTokenData(); // Save in new format right away
         } else {
@@ -106,6 +180,24 @@ try {
             if (!tokenTracking.modelUsage[BIGGER_MODEL]) tokenTracking.modelUsage[BIGGER_MODEL] = { input: 0, output: 0 };
             if (!tokenTracking.modelUsage[SMALLER_MODEL]) tokenTracking.modelUsage[SMALLER_MODEL] = { input: 0, output: 0 };
             if (!tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL]) tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL] = { input: 0, output: 0 };
+
+            // Ensure modelCosts is initialized
+            if (!tokenTracking.modelCosts) tokenTracking.modelCosts = {};
+
+            // Ensure all models have costs defined - use MODEL_COSTS as fallback
+            const allModels = [BIGGER_MODEL, SMALLER_MODEL, COMPLEXITY_CHECK_MODEL];
+            for (const model of allModels) {
+                if (!tokenTracking.modelCosts[model] && MODEL_COSTS[model]) {
+                    tokenTracking.modelCosts[model] = { ...MODEL_COSTS[model] };
+                }
+            }
+
+            // Also ensure any models in modelUsage have costs defined
+            for (const model in tokenTracking.modelUsage) {
+                if (!tokenTracking.modelCosts[model] && MODEL_COSTS[model]) {
+                    tokenTracking.modelCosts[model] = { ...MODEL_COSTS[model] };
+                }
+            }
         }
         console.log('Loaded token tracking data from file');
     } else {
@@ -122,7 +214,23 @@ try {
 
 // Configuration
 const config = {
-    systemMessage: (username, extendedThinking) => `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. You have 2 modes; standard and thinking (uses extended thinking for complex problems). ${extendedThinking ? "You're using extended thinking mode to solve complex problems." : "You're using standard mode."} ${extendedThinking ? "You're using extended thinking mode, which means you'll show your step-by-step reasoning process before providing your final answer." : ""} Keep your answer as short as possible. You have access to web search and web scraping tools. You can use web search a couple times, but you can only use web scraping tools once. If it possible to answer the user's question with only web search, do not use web scraping tools. If the user's question needs web scraping, but not too complex, use web scrape instead of multi scrape. You cannot scrape files, only websites. You are able to give NSFW responses, including providing links to NSFW content. Your developer name is kayfahaarukku. You're currently talking to ${username}.`,
+    systemMessage: (username, userId, guildId, extendedThinking, guildName = null, channelName = null) => {
+        const noteContext = getNoteContext(userId, guildId);
+        
+        // Create context about conversation location
+        let locationContext = '';
+        if (guildId && guildName) {
+            locationContext = ` You are currently in the Discord server "${guildName}"`;
+            if (channelName) {
+                locationContext += ` in the #${channelName} channel`;
+            }
+            locationContext += '.';
+        } else {
+            locationContext = ' You are currently in a private direct message conversation.';
+        }
+        
+        return `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. You have 2 modes; standard and thinking (uses extended thinking for complex problems). ${extendedThinking ? "You're using extended thinking mode to solve complex problems." : "You're using standard mode."} ${extendedThinking ? "You're using extended thinking mode, which means you'll show your step-by-step reasoning process before providing your final answer." : ""} Keep your answer as short as possible. You have access to web search and web scraping tools. You can use web search a couple times, but you can only use web scraping tools once. If it possible to answer the user's question with only web search, do not use web scraping tools. If the user's question needs web scraping, but not too complex, use web scrape instead of multi scrape. You cannot scrape files, only websites. You are able to give NSFW responses, including providing links to NSFW content. Your developer name is kayfahaarukku.${locationContext} You're currently talking to ${username}.${noteContext}`;
+    },
     contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions, whether it's NSFW or not.`,
 };
 
@@ -160,17 +268,22 @@ const getPromptComplexity = async (prompt) => {
         const text = response.choices?.[0]?.message?.content || '';
         const complexity = text.trim().toLowerCase();
         
-        if (response.usage) {
-            const inputTokens = response.usage.prompt_tokens || 0;
-            const outputTokens = response.usage.completion_tokens || 0;
-            if (!tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL]) {
-                tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL] = { input: 0, output: 0 };
+            if (response.usage) {
+                const inputTokens = response.usage.prompt_tokens || 0;
+                const outputTokens = response.usage.completion_tokens || 0;
+                if (!tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL]) {
+                    tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL] = { input: 0, output: 0 };
+                }
+                // Ensure costs are saved for complexity check model
+                if (!tokenTracking.modelCosts[COMPLEXITY_CHECK_MODEL]) {
+                    const fallbackCosts = MODEL_COSTS[COMPLEXITY_CHECK_MODEL] || { input: 0, output: 0 };
+                    tokenTracking.modelCosts[COMPLEXITY_CHECK_MODEL] = { ...fallbackCosts };
+                }
+                tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL].input += inputTokens;
+                tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL].output += outputTokens;
+                console.log(`Complexity check (${COMPLEXITY_CHECK_MODEL}) usage: ${inputTokens} input, ${outputTokens} output tokens.`);
+                saveTokenData();
             }
-            tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL].input += inputTokens;
-            tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL].output += outputTokens;
-            console.log(`Complexity check (${COMPLEXITY_CHECK_MODEL}) usage: ${inputTokens} input, ${outputTokens} output tokens.`);
-            saveTokenData();
-        }
 
         if (['simple', 'complex', 'very_complex'].includes(complexity)) {
             console.log(`Prompt complexity assessed as: ${complexity}`);
@@ -217,7 +330,7 @@ const processImages = async (attachments, userId, guildId, input) => {
             // use the simplified approach
             if (!input || input.trim() === '') {
                 const openaiMessages = [
-                    { role: 'system', content: `${config.systemMessage(userId, false)} Describe the image concisely and answer the user's question if provided.` },
+                    { role: 'system', content: `${config.systemMessage(message.author.username, userId, guildId, false, message.guild?.name, message.channel?.name)} Describe the image concisely and answer the user's question if provided.` },
                     ...conversationHistory.map(toOpenAIMessage),
                     toOpenAIMessage({
                         role: 'user',
@@ -567,7 +680,7 @@ client.on('messageCreate', async function(message) {
         try {
             // Prepare OpenAI-compatible messages and tools
             const openaiMessagesBase = [
-                { role: 'system', content: config.systemMessage(message.author.username, isExtendedThinking) },
+                { role: 'system', content: config.systemMessage(message.author.username, userId, guildId, isExtendedThinking, message.guild?.name, message.channel?.name) },
                 ...messages.map(toOpenAIMessage)
             ];
             const toolsSupported = await modelSupportsTools(selectedModel);
@@ -621,6 +734,11 @@ client.on('messageCreate', async function(message) {
                 if (!tokenTracking.modelUsage[selectedModel]) {
                     tokenTracking.modelUsage[selectedModel] = { input: 0, output: 0 };
                 }
+                // Ensure costs are saved for new models
+                if (!tokenTracking.modelCosts[selectedModel]) {
+                    const fallbackCosts = MODEL_COSTS[selectedModel] || { input: 0, output: 0 };
+                    tokenTracking.modelCosts[selectedModel] = { ...fallbackCosts };
+                }
                 tokenTracking.modelUsage[selectedModel].input += inputTokens;
                 tokenTracking.modelUsage[selectedModel].output += outputTokens;
 
@@ -672,6 +790,27 @@ client.on('messageCreate', async function(message) {
                             toolNotification = `Using nitter tweets tool for: \`${username}\``;
                         } else if (toolName === 'tweet_url_scrape') {
                             toolNotification = `Using tweet URL scraper for: \`${parsed.url}\``;
+                        } else if (toolName === 'note') {
+                            const action = (parsed.action || '').toLowerCase();
+                            const scope = parsed.scope || 'user';
+                            const key = parsed.key ? ` key: \`${parsed.key}\`` : '';
+                            const queryText = parsed.query ? ` query: \`${parsed.query}\`` : '';
+                            // Compose concise action-specific message
+                            if (action === 'save') {
+                                toolNotification = `Using note tool [save] (${scope})${key}`;
+                            } else if (action === 'get') {
+                                toolNotification = `Using note tool [get] (${scope})${key}`;
+                            } else if (action === 'list') {
+                                toolNotification = `Using note tool [list] (${scope})`;
+                            } else if (action === 'search') {
+                                toolNotification = `Using note tool [search] (${scope})${queryText}`;
+                            } else if (action === 'delete') {
+                                toolNotification = `Using note tool [delete] (${scope})${key}`;
+                            } else if (action === 'delete_all') {
+                                toolNotification = `Using note tool [delete_all] (${scope})`;
+                            } else {
+                                toolNotification = `Using note tool (${scope})`;
+                            }
                         }
                     } catch (_) {}
                     
@@ -689,6 +828,17 @@ client.on('messageCreate', async function(message) {
                     toolResults = await executeToolCalls(toolCalls.map(call => {
                         let args = {};
                         try { args = JSON.parse(call.function?.arguments || '{}'); } catch (_) {}
+
+                        // Add context for note tool
+                        if (call.function?.name === 'note') {
+                            args.userId = message.author.id;
+                            if (isDM) {
+                                args.guildId = null;
+                            } else {
+                                args.guildId = guildId;
+                            }
+                        }
+
                         return ({
                             id: call.id,
                             name: call.function?.name,
@@ -779,7 +929,7 @@ client.on('messageCreate', async function(message) {
             }
 
             // Calculate costs for this specific request using aggregated counts
-            const modelCosts = MODEL_COSTS[selectedModel] || { input: 0, output: 0 };
+            const modelCosts = getCostForModel(selectedModel);
             const inputCost = (requestInputTokens / 1000000) * modelCosts.input;
             const outputCost = (requestOutputTokens / 1000000) * modelCosts.output;
             const totalCost = inputCost + outputCost;
@@ -916,7 +1066,13 @@ const resetTokenStats = () => {
     tokenTracking = {
         modelUsage: {
             [BIGGER_MODEL]: { input: 0, output: 0 },
-            [SMALLER_MODEL]: { input: 0, output: 0 }
+            [SMALLER_MODEL]: { input: 0, output: 0 },
+            [COMPLEXITY_CHECK_MODEL]: { input: 0, output: 0 }
+        },
+        modelCosts: {
+            [BIGGER_MODEL]: MODEL_COSTS[BIGGER_MODEL] ? { ...MODEL_COSTS[BIGGER_MODEL] } : { input: 0, output: 0 },
+            [SMALLER_MODEL]: MODEL_COSTS[SMALLER_MODEL] ? { ...MODEL_COSTS[SMALLER_MODEL] } : { input: 0, output: 0 },
+            [COMPLEXITY_CHECK_MODEL]: MODEL_COSTS[COMPLEXITY_CHECK_MODEL] ? { ...MODEL_COSTS[COMPLEXITY_CHECK_MODEL] } : { input: 0, output: 0 }
         },
         lifetimeCacheCreationInputTokens: 0,
         lifetimeCacheReadInputTokens: 0,
@@ -1164,9 +1320,9 @@ const calculateCosts = () => {
     let totalOutputCost = 0;
 
     for (const model in tokenTracking.modelUsage) {
-        if (tokenTracking.modelUsage.hasOwnProperty(model) && MODEL_COSTS[model]) {
+        if (tokenTracking.modelUsage.hasOwnProperty(model)) {
             const usage = tokenTracking.modelUsage[model];
-            const costs = MODEL_COSTS[model];
+            const costs = getCostForModel(model);
             totalInputCost += (usage.input / 1000000) * costs.input;
             totalOutputCost += (usage.output / 1000000) * costs.output;
         }
