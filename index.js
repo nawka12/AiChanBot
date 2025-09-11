@@ -72,18 +72,19 @@ const loadNotes = (filePath) => {
 };
 
 const getNoteContext = (userId, guildId = null) => {
-    const userNotes = loadNotes(getNoteFilePath(userId));
-    const guildNotes = guildId ? loadNotes(getNoteFilePath(userId, guildId)) : {};
+    // Only include notes relevant to the current context:
+    // - In guild chats, include ONLY guild notes
+    // - In DMs, include ONLY user notes
+    const notes = guildId
+        ? loadNotes(getNoteFilePath(userId, guildId))
+        : loadNotes(getNoteFilePath(userId));
 
-    // Combine notes
-    const allNotes = { ...userNotes, ...guildNotes };
-
-    if (Object.keys(allNotes).length === 0) {
+    if (Object.keys(notes).length === 0) {
         return '';
     }
 
     let context = '\n\n**Your Notes:**\n';
-    for (const [key, note] of Object.entries(allNotes)) {
+    for (const [key, note] of Object.entries(notes)) {
         const tags = note.tags && note.tags.length > 0 ? ` [${note.tags.join(', ')}]` : '';
         // Show full content instead of truncated preview to ensure model can read complete notes
         context += `- **${key}**${tags}: ${note.content}\n`;
@@ -303,7 +304,7 @@ const guildConversations = {}; // For guild/server conversations
 const userSettings = {}; // For user settings like extended thinking preferences
 
 // Helper functions
-const processImages = async (attachments, userId, guildId, input) => {
+const processImages = async (attachments, userId, guildId, input, authorUsername, guildName, channelName) => {
     let imageDescriptions = [];
 
     // Get appropriate conversation history
@@ -330,7 +331,7 @@ const processImages = async (attachments, userId, guildId, input) => {
             // use the simplified approach
             if (!input || input.trim() === '') {
                 const openaiMessages = [
-                    { role: 'system', content: `${config.systemMessage(message.author.username, userId, guildId, false, message.guild?.name, message.channel?.name)} Describe the image concisely and answer the user's question if provided.` },
+                    { role: 'system', content: `${config.systemMessage(authorUsername, userId, guildId, false, guildName, channelName)} Describe the image concisely and answer the user's question if provided.` },
                     ...conversationHistory.map(toOpenAIMessage),
                     toOpenAIMessage({
                         role: 'user',
@@ -340,6 +341,11 @@ const processImages = async (attachments, userId, guildId, input) => {
                         ]
                     })
                 ];
+                // Debug: print system prompt used for image-only description
+                try {
+                    const sysMsg = (openaiMessages && openaiMessages[0] && openaiMessages[0].content) ? openaiMessages[0].content : '';
+                    console.log('System prompt (image describe):', sysMsg);
+                } catch (_) {}
                 const imageAI = await callChat({
                     model: SMALLER_MODEL,
                     max_tokens: NORMAL_MAX_TOKENS,
@@ -596,7 +602,7 @@ client.on('messageCreate', async function(message) {
                     });
                 }
                 
-                const result = await processImages(attachmentsToProcess, message.author.id, guildId, fullInput);
+                const result = await processImages(attachmentsToProcess, message.author.id, guildId, fullInput, message.author.username, message.guild?.name, message.channel?.name);
                 
                 // Check if we received image content or descriptions
                 if (typeof result === 'object' && result.imageContent) {
@@ -683,6 +689,11 @@ client.on('messageCreate', async function(message) {
                 { role: 'system', content: config.systemMessage(message.author.username, userId, guildId, isExtendedThinking, message.guild?.name, message.channel?.name) },
                 ...messages.map(toOpenAIMessage)
             ];
+            // Debug: print system prompt for main chat flow
+            try {
+                const sysMsg = (openaiMessagesBase && openaiMessagesBase[0] && openaiMessagesBase[0].content) ? openaiMessagesBase[0].content : '';
+                console.log('System prompt:', sysMsg);
+            } catch (_) {}
             const toolsSupported = await modelSupportsTools(selectedModel);
             const openaiTools = toolsSupported ? toOpenAITools(TOOL_SCHEMAS) : undefined;
 
@@ -1041,7 +1052,7 @@ client.on('messageCreate', async function(message) {
                     if (imageData) {
                         guildConversations[guildId].push({ 
                             role: "user", 
-                            content: [`[${message.author.username}]: [Image with query: ${fullInput}]`]
+                            content: `[${message.author.username}]: [Image with query: ${fullInput}]`
                         });
                     } else {
                         guildConversations[guildId].push({ role: "user", content: processedInput });
