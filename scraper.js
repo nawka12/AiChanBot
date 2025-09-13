@@ -502,6 +502,9 @@ async function scrapeGeneric(url) {
     // Load the HTML into cheerio
     const $ = cheerio.load(response.data);
     
+    // Remove noisy/non-content elements
+    $('script, style, nav, footer, header, aside, iframe, noscript, svg, form, input, button, [role="banner"], [role="navigation"], [role="search"], [aria-hidden="true"], .sidebar, .comments, .ad, .advertisement, .cookie, .cookie-banner, .consent, .modal, .tooltip, .toast, .banner').remove();
+
     // Extract the title
     const title = $('title').text().trim() || 'No title found';
     
@@ -529,13 +532,29 @@ async function scrapeGeneric(url) {
     
     // If no content was found with selectors, grab the body text
     if (!content || content.length < 100) {
-      // Remove script, style, nav, footer, and header elements before extracting text
+      // Remove common chrome before extracting text
       $('script, style, nav, footer, header, aside, .sidebar, .comments, .ad, .advertisement').remove();
       content = $('body').text().trim();
       
       // Clean up the content - remove extra whitespace
-      content = content.replace(/\s+/g, ' ');
+      content = content
+        .replace(/\r/g, '')
+        .replace(/\u00A0/g, ' ')
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/\s+\n/g, '\n')
+        .replace(/\s+/g, ' ')
+        .trim();
     }
+    
+    // Final normalization pass
+    content = content
+      .replace(/\r/g, '')
+      .replace(/\u00A0/g, ' ')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/\s+\n/g, '\n')
+      .trim();
     
     return {
       url,
