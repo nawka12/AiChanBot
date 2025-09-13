@@ -120,4 +120,28 @@ async function modelSupportsReasoning(modelId) {
 
 module.exports.modelSupportsReasoning = modelSupportsReasoning;
 
+// Determine reasoning style for a model: 'effort' (OpenAI), 'max_tokens' (Anthropic/Gemini/Qwen), 'enabled' (boolean hybrid), or 'none'
+async function getReasoningStyle(modelId) {
+  try {
+    if (!modelId) return 'none';
+    const id = String(modelId);
+    const lower = id.toLowerCase();
+    // OpenAI models use effort
+    if (lower.startsWith('openai/')) return 'effort';
+    // If model doesn't support reasoning at all
+    const supports = await modelSupportsReasoning(modelId);
+    if (!supports) return 'none';
+    // Known families that support explicit reasoning token budgets
+    if (lower.startsWith('anthropic/')) return 'max_tokens';
+    if (lower.startsWith('google/') || lower.includes('gemini')) return 'max_tokens';
+    if (lower.includes('qwen')) return 'max_tokens';
+    // Fallback to boolean-enabled hybrid style (e.g., GLM and others)
+    return 'enabled';
+  } catch (_) {
+    return 'none';
+  }
+}
+
+module.exports.getReasoningStyle = getReasoningStyle;
+
 

@@ -9,7 +9,7 @@ const path = require('path');
 
 // Model and OpenRouter helpers (modularized)
 const { getModels, getModelCosts, selectModelByComplexity } = require('./modelConfig.js');
-const { toOpenAIMessage, toOpenAITools, callChat, modelSupportsTools, modelSupportsReasoning } = require('./openrouter.js');
+const { toOpenAIMessage, toOpenAITools, callChat, modelSupportsTools, modelSupportsReasoning, getReasoningStyle } = require('./openrouter.js');
 
 // Models
 const { BIGGER_MODEL, SMALLER_MODEL, COMPLEXITY_MODEL } = getModels();
@@ -539,6 +539,7 @@ client.on('messageCreate', async function(message) {
 
         // New logic: Determine prompt complexity to select model
         const complexity = await getPromptComplexity(fullInput);
+        console.log('[Complexity]', { inputPreview: fullInput.slice(0, 120), complexity });
         let selectedModel = selectModelByComplexity(complexity);
         let forceExtendedThinking = false;
         
@@ -645,13 +646,20 @@ client.on('messageCreate', async function(message) {
             guildConversations[guildId];
         
         // Check if extended thinking is enabled for this user
+        // Thinking mode is only enabled automatically for very complex prompts
         const isExtendedThinking = forceExtendedThinking;
         const showThinkingProcess = userSettings[userId].showThinkingProcess;
         const thinkingBudget = userSettings[userId].thinkingBudget;
-        const enableReasoning = isExtendedThinking || showThinkingProcess;
+        // Reasoning policy:
+        // - If model is reasoning-only (effort or max_tokens), enable reasoning for all complexities
+        // - Otherwise, enable only for very complex prompts (auto mode)
+        // reasoningStyle is computed later; set a placeholder and update after we get it
+        let enableReasoning = isExtendedThinking;
         const clampedThinkingBudget = Math.max(MIN_THINKING_BUDGET, Math.min(thinkingBudget || DEFAULT_THINKING_BUDGET, 32000));
         const isOpenAIProvider = typeof selectedModel === 'string' && selectedModel.startsWith('openai/');
         const isReasoningModel = await modelSupportsReasoning(selectedModel);
+        // Determine reasoning style generically for hybrid/effort/max_tokens models
+        const reasoningStyle = await getReasoningStyle(selectedModel);
         
         // Create messages array with conversation history
         let messages = [...conversationHistory];
@@ -695,7 +703,38 @@ client.on('messageCreate', async function(message) {
                 console.log('System prompt:', sysMsg);
             } catch (_) {}
             const toolsSupported = await modelSupportsTools(selectedModel);
+            console.log('[Tools][Support]', { model: selectedModel, toolsSupported });
             const openaiTools = toolsSupported ? toOpenAITools(TOOL_SCHEMAS) : undefined;
+            const reasoningStyle = await getReasoningStyle(selectedModel);
+            console.log('[Reasoning][ModelStyle]', { model: selectedModel, reasoningStyle });
+
+            // Determine if the selected model is reasoning-only
+            const isReasoningOnly = (reasoningStyle === 'effort' || reasoningStyle === 'max_tokens');
+            if (isReasoningOnly) {
+                enableReasoning = true;
+            }
+
+            // Helper to extract reasoning text from a message (supports message.reasoning and reasoning_details)
+            const extractReasoningText = (msg) => {
+                try {
+                    if (!msg || typeof msg !== 'object') return '';
+                    if (typeof msg.reasoning === 'string' && msg.reasoning.trim()) {
+                        return msg.reasoning.trim();
+                    }
+                    const details = Array.isArray(msg.reasoning_details) ? msg.reasoning_details : [];
+                    const parts = [];
+                    for (const item of details) {
+                        if (item && typeof item === 'object') {
+                            if (typeof item.text === 'string' && item.text.trim()) parts.push(item.text.trim());
+                            else if (typeof item.summary === 'string' && item.summary.trim()) parts.push(item.summary.trim());
+                        }
+                    }
+                    return parts.join('\n');
+                } catch (_) { return ''; }
+            };
+
+            // Accumulate reasoning across responses (initial and follow-ups)
+            const collectedReasoning = [];
 
             // Send a "Thinking..." message while the model is generating
             let thinkingMessage = null;
@@ -704,20 +743,48 @@ client.on('messageCreate', async function(message) {
             
             // Make the first API request
             let openaiMessages = [...openaiMessagesBase];
-            // Ensure there are enough tokens for content beyond reasoning (apply primarily to Anthropic-style reasoning.max_tokens)
+            // Ensure there are enough tokens for content beyond reasoning (apply to budget-style reasoning.max_tokens)
             const baseMaxTokens = isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS;
             const requiredForContent = 2048; // leave room for the final answer
             let computedMaxTokens = baseMaxTokens;
-            if (enableReasoning && !isOpenAIProvider) {
-                const minNeeded = clampedThinkingBudget + requiredForContent;
+            // Map effort/budget based on complexity when model is reasoning-only
+            let mappedEffort = null;
+            let allocatedBudget = null;
+            if (enableReasoning && reasoningStyle === 'effort') {
+                mappedEffort = (complexity === 'very_complex') ? 'high' : (complexity === 'complex') ? 'medium' : 'low';
+            } else if (enableReasoning && reasoningStyle === 'max_tokens') {
+                const baseBudget = clampedThinkingBudget;
+                allocatedBudget = (complexity === 'very_complex') ? baseBudget : (complexity === 'complex') ? Math.floor(baseBudget / 2) : Math.max(MIN_THINKING_BUDGET, Math.floor(baseBudget / 3));
+            }
+            // Only inflate top-level max_tokens when using budget-style reasoning.max_tokens
+            if (enableReasoning && reasoningStyle === 'max_tokens') {
+                const minNeeded = (allocatedBudget || clampedThinkingBudget) + requiredForContent;
                 computedMaxTokens = Math.max(baseMaxTokens, Math.min(EXTENDED_THINKING_MAX_TOKENS, minNeeded));
             }
 
             const reasoningConfig = enableReasoning
-                ? (isOpenAIProvider
-                    ? { effort: ((complexity === 'very_complex' && isReasoningModel) ? 'high' : (userSettings[userId].thinkingBudgetEffort || 'medium')), exclude: !showThinkingProcess, enabled: true }
-                    : { max_tokens: clampedThinkingBudget, exclude: !showThinkingProcess, enabled: true })
+                ? (reasoningStyle === 'effort'
+                    ? { effort: (mappedEffort || (userSettings[userId].thinkingBudgetEffort || 'medium')), exclude: !showThinkingProcess, enabled: true }
+                    : reasoningStyle === 'max_tokens'
+                        ? { max_tokens: (allocatedBudget || clampedThinkingBudget), exclude: !showThinkingProcess, enabled: true }
+                        : reasoningStyle === 'enabled'
+                            ? { enabled: true, exclude: !showThinkingProcess }
+                            : undefined)
                 : undefined;
+
+            // Debug: log reasoning configuration for initial request
+            try {
+                console.log('[Reasoning][Initial]', JSON.stringify({
+                    model: selectedModel,
+                    complexity,
+                    reasoningStyle,
+                    enableReasoning,
+                    computedMaxTokens,
+                    mappedEffort,
+                    allocatedBudget,
+                    reasoningConfig
+                }, null, 2));
+            } catch (_) {}
 
             // Per-request aggregates across all API calls in this request (initial + follow-ups)
             let accumulatedReasoningTokens = 0;
@@ -771,10 +838,29 @@ client.on('messageCreate', async function(message) {
                 tools: openaiTools,
                 reasoning: reasoningConfig
             });
+            try {
+                const choice0 = response?.choices?.[0] || {};
+                console.log('[Response][Meta][Initial]', {
+                    finish_reason: choice0.finish_reason,
+                    toolsSupported,
+                    hasToolCalls: Array.isArray(choice0.message?.tool_calls) && choice0.message.tool_calls.length > 0,
+                    messageType: typeof choice0.message?.content,
+                    contentPreview: typeof choice0.message?.content === 'string' ? choice0.message.content.slice(0, 120) : null
+                });
+            } catch (_) {}
             applyUsageFromResponse(response?.usage);
 
             // Process any tool calls
             let assistantMessage = response.choices?.[0]?.message;
+            // Collect reasoning from initial assistant message (if any)
+            const initialReasoning = extractReasoningText(assistantMessage);
+            if (initialReasoning) {
+                collectedReasoning.push(initialReasoning);
+                try { console.log('[Reasoning][Captured][Initial]', initialReasoning.slice(0, 200)); } catch (_) {}
+            }
+            if (!assistantMessage?.content) {
+                try { console.log('[Response][Warn] Empty content in assistantMessage (initial). Full message:', JSON.stringify(assistantMessage || null)); } catch (_) {}
+            }
             let toolCalls = toolsSupported ? (assistantMessage?.tool_calls || []) : [];
             while (toolCalls && toolCalls.length > 0) {
                 console.log("\nModel is requesting to use tools:");
@@ -909,16 +995,43 @@ client.on('messageCreate', async function(message) {
                 // Recompute tokens in case budget applies
                 const baseMaxTokens2 = isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS;
                 let computedMaxTokens2 = baseMaxTokens2;
-                if (enableReasoning && !isOpenAIProvider) {
-                    const minNeeded2 = clampedThinkingBudget + 2048;
+                // Reuse mapped budget rules for follow-up
+                let mappedEffort2 = null;
+                let allocatedBudget2 = null;
+                if (enableReasoning && reasoningStyle === 'effort') {
+                    mappedEffort2 = (complexity === 'very_complex') ? 'high' : (complexity === 'complex') ? 'medium' : 'low';
+                } else if (enableReasoning && reasoningStyle === 'max_tokens') {
+                    const baseBudget2 = clampedThinkingBudget;
+                    allocatedBudget2 = (complexity === 'very_complex') ? baseBudget2 : (complexity === 'complex') ? Math.floor(baseBudget2 / 2) : Math.max(MIN_THINKING_BUDGET, Math.floor(baseBudget2 / 3));
+                }
+                if (enableReasoning && reasoningStyle === 'max_tokens') {
+                    const minNeeded2 = (allocatedBudget2 || clampedThinkingBudget) + 2048;
                     computedMaxTokens2 = Math.max(baseMaxTokens2, Math.min(EXTENDED_THINKING_MAX_TOKENS, minNeeded2));
                 }
 
                 const reasoningConfig2 = enableReasoning
-                    ? (isOpenAIProvider
-                        ? { effort: ((complexity === 'very_complex' && isReasoningModel) ? 'high' : (userSettings[userId].thinkingBudgetEffort || 'medium')), exclude: !showThinkingProcess, enabled: true }
-                        : { max_tokens: clampedThinkingBudget, exclude: !showThinkingProcess, enabled: true })
+                    ? (reasoningStyle === 'effort'
+                        ? { effort: (mappedEffort2 || (userSettings[userId].thinkingBudgetEffort || 'medium')), exclude: !showThinkingProcess, enabled: true }
+                        : reasoningStyle === 'max_tokens'
+                            ? { max_tokens: (allocatedBudget2 || clampedThinkingBudget), exclude: !showThinkingProcess, enabled: true }
+                            : reasoningStyle === 'enabled'
+                                ? { enabled: true, exclude: !showThinkingProcess }
+                                : undefined)
                     : undefined;
+
+                // Debug: log reasoning configuration for follow-up request
+                try {
+                    console.log('[Reasoning][FollowUp]', JSON.stringify({
+                        model: selectedModel,
+                        complexity,
+                        reasoningStyle,
+                        enableReasoning,
+                        computedMaxTokens: computedMaxTokens2,
+                        mappedEffort: mappedEffort2,
+                        allocatedBudget: allocatedBudget2,
+                        reasoningConfig: reasoningConfig2
+                    }, null, 2));
+                } catch (_) {}
 
                 response = await callChat({
                     model: selectedModel,
@@ -927,9 +1040,28 @@ client.on('messageCreate', async function(message) {
                     tools: openaiTools,
                     reasoning: reasoningConfig2
                 });
+                try {
+                    const choice0b = response?.choices?.[0] || {};
+                    console.log('[Response][Meta][FollowUp]', {
+                        finish_reason: choice0b.finish_reason,
+                        toolsSupported,
+                        hasToolCalls: Array.isArray(choice0b.message?.tool_calls) && choice0b.message.tool_calls.length > 0,
+                        messageType: typeof choice0b.message?.content,
+                        contentPreview: typeof choice0b.message?.content === 'string' ? choice0b.message.content.slice(0, 120) : null
+                    });
+                } catch (_) {}
                 applyUsageFromResponse(response?.usage);
 
                 assistantMessage = response.choices?.[0]?.message;
+                // Collect reasoning from follow-up assistant message (if any)
+                const followReasoning = extractReasoningText(assistantMessage);
+                if (followReasoning) {
+                    collectedReasoning.push(followReasoning);
+                    try { console.log('[Reasoning][Captured][FollowUp]', followReasoning.slice(0, 200)); } catch (_) {}
+                }
+                if (!assistantMessage?.content) {
+                    try { console.log('[Response][Warn] Empty content in assistantMessage (follow-up). Full message:', JSON.stringify(assistantMessage || null)); } catch (_) {}
+                }
                 toolCalls = toolsSupported ? (assistantMessage?.tool_calls || []) : [];
             }
             
@@ -979,13 +1111,18 @@ client.on('messageCreate', async function(message) {
 
             // Prepare final response text
             let finalResponse = assistantMessage?.content || '';
-            const reasoningText = (showThinkingProcess && assistantMessage && typeof assistantMessage.reasoning === 'string')
-                ? assistantMessage.reasoning
+            const reasoningText = (showThinkingProcess && collectedReasoning.length > 0)
+                ? collectedReasoning.join('\n\n')
                 : '';
             if ((!finalResponse || finalResponse.trim() === '') && imageDescriptions) {
                 finalResponse = imageDescriptions;
             }
             if (!finalResponse || finalResponse.trim() === '') {
+                console.log('[Response][Warn] Final response content empty. Falling back to default error. assistantMessage:', typeof assistantMessage === 'object' ? JSON.stringify({
+                    hasContent: !!assistantMessage?.content,
+                    hasReasoning: !!assistantMessage?.reasoning,
+                    hasToolCalls: Array.isArray(assistantMessage?.tool_calls) && assistantMessage.tool_calls.length > 0
+                }) : assistantMessage);
                 finalResponse = 'I encountered an issue processing your request. Please try again.';
             }
 
@@ -1113,7 +1250,8 @@ client.on('interactionCreate', async interaction => {
         userSettings[user.id] = {
             showThinkingProcess: false,
                 thinkingBudget: DEFAULT_THINKING_BUDGET,
-                thinkingBudgetEffort: 'medium'
+                thinkingBudgetEffort: 'medium',
+                thinkingModePreference: 'auto' // 'auto' | 'on' | 'off'
         };
     }
     
@@ -1137,23 +1275,23 @@ client.on('interactionCreate', async interaction => {
             if (isOpenAI && textEffort) {
                 const effort = (textEffort || '').toLowerCase();
                 if (!['low','medium','high'].includes(effort)) {
-                    await interaction.reply({ content: 'For OpenAI models, thinking budget accepts one of: low, medium, high.', ephemeral: true });
+                    await interaction.reply({ content: 'For OpenAI models, use one of: low, medium, high.', ephemeral: true });
                     return;
                 }
                 userSettings[user.id].thinkingBudgetEffort = effort;
-                replyText = `Thinking budget set to effort: ${effort}.`;
+                replyText = `Set effort default to: ${effort}. Note: for reasoning-only OpenAI models, effort is auto-mapped by complexity: simple→low, complex→medium, very_complex→high.`;
             } else if (!isOpenAI && typeof raw === 'number') {
                 if (raw < MIN_THINKING_BUDGET) {
                     await interaction.reply({ content: `Thinking budget must be at least ${MIN_THINKING_BUDGET} tokens.`, ephemeral: true });
                     return;
                 }
                 userSettings[user.id].thinkingBudget = Math.min(raw, 32000);
-                replyText = `Thinking budget set to ${userSettings[user.id].thinkingBudget} tokens.`;
+                replyText = `Thinking budget set to ${userSettings[user.id].thinkingBudget} tokens. Note: for reasoning-only budget models, allocation is auto-mapped by complexity: simple→1/3, complex→1/2, very_complex→full.`;
             } else {
-                // Fallback: try to parse a string argument from command text (if framework allows)
+                // Fallback
                 replyText = isOpenAI 
-                    ? 'For OpenAI models, use: /thinking_budget with low, medium, or high.'
-                    : `For non-OpenAI models, provide a number (>= ${MIN_THINKING_BUDGET}).`;
+                    ? 'For OpenAI models, pass low|medium|high. Effort is auto-mapped by complexity when the model is reasoning-only.'
+                    : `For budget models, pass a number (>= ${MIN_THINKING_BUDGET}). Allocation auto-maps by complexity when the model is reasoning-only.`;
             }
 
             await interaction.reply({ content: replyText, ephemeral: true });
@@ -1221,7 +1359,7 @@ client.on('interactionCreate', async interaction => {
                     { name: 'AI Models', value: `Default: \`${SMALLER_MODEL}\`\nComplex: \`${BIGGER_MODEL}\``, inline: false },
                     { name: 'Normal Max Tokens', value: NORMAL_MAX_TOKENS.toString(), inline: true },
                     { name: 'Extended Max Tokens', value: EXTENDED_THINKING_MAX_TOKENS.toString(), inline: true },
-                    { name: 'Automatic Thinking Mode', value: 'Enabled for very complex prompts', inline: false },
+                    { name: 'Automatic Thinking Mode', value: 'Enabled for very complex prompts', inline: true },
                     { name: 'Show Thinking Process', value: userSettings[user.id].showThinkingProcess ? 'ON' : 'OFF', inline: true },
                     { name: 'Thinking Budget', value: (SMALLER_MODEL.startsWith('openai/') || BIGGER_MODEL.startsWith('openai/')) ? (userSettings[user.id].thinkingBudgetEffort || 'medium') : userSettings[user.id].thinkingBudget.toString(), inline: true }
                 );

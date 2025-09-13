@@ -24,6 +24,8 @@ The model can call tools automatically - no special commands needed:
 - `nitter_tweets` - Fetches tweets from specific users
 - `tweet_url_scrape` - Scrapes individual tweet URLs
 
+- `note` - Manages personal or guild notes as a persistent knowledge base (scoped)
+
 ### 🖼️ **Image Processing**
 - Upload images and ask questions about them
 - Automatic image description and analysis
@@ -35,6 +37,8 @@ The model can call tools automatically - no special commands needed:
 - User recognition in server conversations
 - Reply context handling - responds intelligently to message replies
 - Conversation reset functionality
+
+- Built-in notes system with strict scoping (personal notes in DMs; guild notes in servers)
 
 ### 📊 **Comprehensive Analytics**
 - Detailed token usage tracking per model
@@ -74,10 +78,12 @@ Create a `.env` file in the root directory:
 DISCORD_TOKEN=your_discord_bot_token
 OPENROUTER_API_KEY=your_openrouter_api_key
 
-# Model Selection (Optional - defaults shown)
+# Model Selection (Optional - defaults shown; complexity model is independent)
 OPENROUTER_MODEL_SMALLER=openai/gpt-5-nano
 OPENROUTER_MODEL_BIGGER=openai/gpt-5-mini
-OPENROUTER_MODEL_COMPLEXITY=openai/gpt-5-mini  # optional model dedicated for complexity checks
+# Optional alias for bigger model used by older configs
+OPENROUTER_MODEL_HYBRID=
+OPENROUTER_MODEL_COMPLEXITY=openai/gpt-4.1-nano  # dedicated model for complexity checks
 
 # Model Cost Overrides (Optional - per million tokens)
 MODEL_SMALLER_COST_IN=0.05      # Smaller model input cost
@@ -100,7 +106,8 @@ BOT_CREATOR_ID=your_discord_user_id
 **Model Configuration:**
 - `OPENROUTER_MODEL_SMALLER`: Model used for simple queries (default: `openai/gpt-5-nano`)
 - `OPENROUTER_MODEL_BIGGER`: Model used for complex queries (default: `openai/gpt-5-mini`)
-- `OPENROUTER_MODEL_COMPLEXITY`: Model used for complexity detection (default: uses smaller model)
+- `OPENROUTER_MODEL_HYBRID`: Optional alias that can provide the bigger model (fallback used by code)
+- `OPENROUTER_MODEL_COMPLEXITY`: Model used for complexity detection (default: `openai/gpt-4.1-nano`)
 
 **Cost Configuration:**
 - `MODEL_SMALLER_COST_IN/OUT`: Override costs for smaller model (per million tokens)
@@ -132,6 +139,8 @@ const baseUrl = 'http://127.0.0.1:8080/search?q=';
 ### Twitter/X Support
 - Twitter/X links are handled via public Nitter mirrors in `nitter_tool.js` (no API keys needed).
 - Availability depends on working Nitter instances and CORS proxies; occasional failures are expected.
+
+- For Twitter links, scraping is routed through the `tweet_url_scrape` or `nitter_tweets` tools automatically. Do not use `web_scrape` for twitter.com/x.com.
 
 ### Bot Installation
 
@@ -166,6 +175,24 @@ pm2 save
 - `/reset` - Reset conversation history
 - `/status` - View bot configuration and usage statistics
 - `/reset_tokens` - Reset token statistics (creator only)
+
+### Notes (Built-in Knowledge Base)
+- The model can save and retrieve notes on your behalf using the `note` tool.
+- Scoping is strict by design:
+  - In DMs, only personal (`user`) notes are accessible
+  - In servers, only server (`guild`) notes for that specific guild are accessible
+- Storage is persisted under `notes/users/` and `notes/guilds/`.
+
+Examples:
+```
+@Ai-chan Remember that my editor is Cursor (personal note)
+```
+```
+@Ai-chan In this server, our build command is `npm run build` (guild note)
+```
+```
+@Ai-chan What notes do you have about our build? (retrieves relevant notes in context)
+```
 
 ### Examples
 
@@ -214,6 +241,8 @@ pm2 save
 - Error recovery and graceful degradation
 - Automatic token data persistence (stored in `token_data.json`)
 
+- Notes persistence per user/guild (stored in `notes/users/*.json` and `notes/guilds/*.json`)
+
 ### Time & Locale
 - All dates/times displayed by the bot use Asia/Jakarta (GMT+7).
 
@@ -231,6 +260,8 @@ pm2 save
 - Issues related to Discord bot setup will not be addressed
 - The bot can provide NSFW responses when appropriate
 - Usage costs are based on pricing values defined in code
+
+- The model may use web search multiple times but will only use scraping tools once per request when needed
 
 ## Developer
 

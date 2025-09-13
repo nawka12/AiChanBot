@@ -1,7 +1,7 @@
 // Centralized model configuration and selection
 
 const DEFAULT_MODELS = {
-  BIGGER_MODEL: process.env.OPENROUTER_MODEL_BIGGER || 'openai/gpt-5-mini',
+  BIGGER_MODEL: process.env.OPENROUTER_MODEL_BIGGER || process.env.OPENROUTER_MODEL_HYBRID || 'openai/gpt-5-mini',
   SMALLER_MODEL: process.env.OPENROUTER_MODEL_SMALLER || 'openai/gpt-5-nano',
   COMPLEXITY_MODEL: process.env.OPENROUTER_MODEL_COMPLEXITY || process.env.OPENROUTER_MODEL_SMALLER || 'openai/gpt-4.1-nano',
 };
