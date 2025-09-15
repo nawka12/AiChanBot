@@ -1,6 +1,11 @@
 # AiChanBot
 A Discord bot using OpenRouter to access LLM models, featuring automatic complexity detection and comprehensive tool integration.
 
+## Announcement
+Due to the fastly moving breakthrough in LLMs, and sometimes achieved by different providers, I have made the OpenRouter branch as the main branch. This to ensure moving to different models as smooth as possible.
+
+I'm also declaring that the other branches are deprecated.
+
 ## Features
 
 ### 🤖 **Intelligent Model Selection**
