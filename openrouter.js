@@ -104,6 +104,12 @@ async function modelSupportsReasoning(modelId) {
     const [author, ...rest] = String(modelId).split('/');
     const slug = rest.join('/');
     if (!author || !slug) throw new Error('invalid model id');
+    // Explicitly recognize xAI Grok models as supporting reasoning via `reasoning.enabled`
+    const lower = String(modelId).toLowerCase();
+    if (lower.startsWith('xai/') || lower.includes('grok-4')) {
+      reasoningSupportCache.set(modelId, true);
+      return true;
+    }
     const url = `https://openrouter.ai/api/v1/models/${encodeURIComponent(author)}/${encodeURIComponent(slug)}/endpoints`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`status ${res.status}`);
@@ -128,6 +134,8 @@ async function getReasoningStyle(modelId) {
     const lower = id.toLowerCase();
     // OpenAI models use effort
     if (lower.startsWith('openai/')) return 'effort';
+    // xAI Grok models use boolean-enabled reasoning parameter
+    if (lower.startsWith('xai/') || lower.includes('grok-4')) return 'enabled';
     // If model doesn't support reasoning at all
     const supports = await modelSupportsReasoning(modelId);
     if (!supports) return 'none';
