@@ -215,7 +215,7 @@ try {
 
 // Configuration
 const config = {
-    systemMessage: (username, userId, guildId, extendedThinking, guildName = null, channelName = null) => {
+    systemMessage: (username, userId, guildId, guildName = null, channelName = null) => {
         const noteContext = getNoteContext(userId, guildId);
         
         // Create context about conversation location
@@ -230,7 +230,7 @@ const config = {
             locationContext = ' You are currently in a private direct message conversation.';
         }
         
-        return `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. You have 2 modes; standard and thinking (uses extended thinking for complex problems). ${extendedThinking ? "You're using extended thinking mode to solve complex problems." : "You're using standard mode."} ${extendedThinking ? "You're using extended thinking mode, which means you'll show your step-by-step reasoning process before providing your final answer." : ""} Keep your answer as short as possible. You have access to web search and web scraping tools. You can use web search a couple times, but you can only use web scraping tools once. If it possible to answer the user's question with only web search, do not use web scraping tools. If the user's question needs web scraping, but not too complex, use web scrape instead of multi scrape. You cannot scrape files, only websites. You are able to give NSFW responses, including providing links to NSFW content. Your developer name is kayfahaarukku.${locationContext} You're currently talking to ${username}.${noteContext}`;
+        return `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. Keep your answer as short as possible. You have access to web search and web scraping tools. You can use web search a couple times, but you can only use web scraping tools once. If it possible to answer the user's question with only web search, do not use web scraping tools. If the user's question needs web scraping, but not too complex, use web scrape instead of multi scrape. You cannot scrape files, only websites. You are able to give NSFW responses, including providing links to NSFW content. Your developer name is kayfahaarukku.${locationContext} You're currently talking to ${username}.${noteContext}`;
     },
     contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions, whether it's NSFW or not.`,
 };
@@ -331,7 +331,7 @@ const processImages = async (attachments, userId, guildId, input, authorUsername
             // use the simplified approach
             if (!input || input.trim() === '') {
                 const openaiMessages = [
-                    { role: 'system', content: `${config.systemMessage(authorUsername, userId, guildId, false, guildName, channelName)} Describe the image concisely and answer the user's question if provided.` },
+                    { role: 'system', content: `${config.systemMessage(authorUsername, userId, guildId, guildName, channelName)} Describe the image concisely and answer the user's question if provided.` },
                     ...conversationHistory.map(toOpenAIMessage),
                     toOpenAIMessage({
                         role: 'user',
@@ -537,9 +537,21 @@ client.on('messageCreate', async function(message) {
             return;
         }
 
+        const userId = message.author.id;
+
+        // Initialize user settings if they don't exist
+        if (!userSettings[userId]) {
+            userSettings[userId] = {
+                showThinkingProcess: false,
+                thinkingBudget: DEFAULT_THINKING_BUDGET,
+                thinkingBudgetEffort: 'medium'
+            };
+        }
+
         // New logic: Determine prompt complexity to select model
         const complexity = await getPromptComplexity(fullInput);
         console.log('[Complexity]', { inputPreview: fullInput.slice(0, 120), complexity });
+        
         let selectedModel = selectModelByComplexity(complexity);
         let forceExtendedThinking = false;
         
@@ -551,17 +563,6 @@ client.on('messageCreate', async function(message) {
                 forceExtendedThinking = true;
                 await message.channel.send(`> 🧠 This requires deep thought. Engaging my powerful bigger model and enabling thinking mode for a thorough analysis.`);
                 break;
-        }
-
-        const userId = message.author.id;
-
-        // Initialize user settings if they don't exist
-        if (!userSettings[userId]) {
-            userSettings[userId] = {
-                showThinkingProcess: false,
-                thinkingBudget: DEFAULT_THINKING_BUDGET,
-                thinkingBudgetEffort: 'medium'
-            };
         }
 
         // Modify the input to include username for guild messages
@@ -653,13 +654,18 @@ client.on('messageCreate', async function(message) {
         // Reasoning policy:
         // - If model is reasoning-only (effort or max_tokens), enable reasoning for all complexities
         // - Otherwise, enable only for very complex prompts (auto mode)
-        // reasoningStyle is computed later; set a placeholder and update after we get it
-        let enableReasoning = isExtendedThinking;
         const clampedThinkingBudget = Math.max(MIN_THINKING_BUDGET, Math.min(thinkingBudget || DEFAULT_THINKING_BUDGET, 32000));
         const isOpenAIProvider = typeof selectedModel === 'string' && selectedModel.startsWith('openai/');
+        
+        // Check reasoning support BEFORE building system message
         const isReasoningModel = await modelSupportsReasoning(selectedModel);
-        // Determine reasoning style generically for hybrid/effort/max_tokens models
         const reasoningStyle = await getReasoningStyle(selectedModel);
+        console.log('[Reasoning][ModelStyle]', { model: selectedModel, reasoningStyle, isReasoningModel });
+        
+        // Determine if the selected model is reasoning-only
+        const isReasoningOnly = (reasoningStyle === 'effort' || reasoningStyle === 'max_tokens');
+        // Only enable reasoning if model supports it AND (it's reasoning-only OR extended thinking is forced)
+        let enableReasoning = isReasoningModel && (isReasoningOnly || isExtendedThinking);
         
         // Create messages array with conversation history
         let messages = [...conversationHistory];
@@ -694,7 +700,7 @@ client.on('messageCreate', async function(message) {
         try {
             // Prepare OpenAI-compatible messages and tools
             const openaiMessagesBase = [
-                { role: 'system', content: config.systemMessage(message.author.username, userId, guildId, isExtendedThinking, message.guild?.name, message.channel?.name) },
+                { role: 'system', content: config.systemMessage(message.author.username, userId, guildId, message.guild?.name, message.channel?.name) },
                 ...messages.map(toOpenAIMessage)
             ];
             // Debug: print system prompt for main chat flow
@@ -705,14 +711,6 @@ client.on('messageCreate', async function(message) {
             const toolsSupported = await modelSupportsTools(selectedModel);
             console.log('[Tools][Support]', { model: selectedModel, toolsSupported });
             const openaiTools = toolsSupported ? toOpenAITools(TOOL_SCHEMAS) : undefined;
-            const reasoningStyle = await getReasoningStyle(selectedModel);
-            console.log('[Reasoning][ModelStyle]', { model: selectedModel, reasoningStyle });
-
-            // Determine if the selected model is reasoning-only
-            const isReasoningOnly = (reasoningStyle === 'effort' || reasoningStyle === 'max_tokens');
-            if (isReasoningOnly) {
-                enableReasoning = true;
-            }
 
             // Helper to extract reasoning text from a message (supports message.reasoning and reasoning_details)
             const extractReasoningText = (msg) => {
@@ -723,11 +721,17 @@ client.on('messageCreate', async function(message) {
                     }
                     const details = Array.isArray(msg.reasoning_details) ? msg.reasoning_details : [];
                     const parts = [];
+                    let hasEncrypted = false;
                     for (const item of details) {
                         if (item && typeof item === 'object') {
                             if (typeof item.text === 'string' && item.text.trim()) parts.push(item.text.trim());
                             else if (typeof item.summary === 'string' && item.summary.trim()) parts.push(item.summary.trim());
+                            else if (item.type === 'reasoning.encrypted') hasEncrypted = true;
                         }
+                    }
+                    // Log if encrypted reasoning is present (even though we can't extract it)
+                    if (hasEncrypted && parts.length === 0) {
+                        try { console.log('[Reasoning][Encrypted] Encrypted reasoning detected but cannot be extracted'); } catch (_) {}
                     }
                     return parts.join('\n');
                 } catch (_) { return ''; }
@@ -801,6 +805,13 @@ client.on('messageCreate', async function(message) {
                 const cacheCreation = usage.cache_creation_input_tokens || 0;
                 const cacheRead = usage.cache_read_input_tokens || 0;
 
+                // Log reasoning token tracking for debugging
+                if (enableReasoning && reasoningTokens === 0) {
+                    try { console.log('[Reasoning][Tokens] Reasoning enabled but reasoning_tokens not in usage object. Tokens may be included in output_tokens.'); } catch (_) {}
+                } else if (reasoningTokens > 0) {
+                    try { console.log('[Reasoning][Tokens] Reasoning tokens detected:', reasoningTokens); } catch (_) {}
+                }
+
                 // Aggregate for this request
                 requestInputTokens += inputTokens;
                 requestOutputTokens += outputTokens;
@@ -852,6 +863,12 @@ client.on('messageCreate', async function(message) {
 
             // Process any tool calls
             let assistantMessage = response.choices?.[0]?.message;
+            // Check for reasoning_details presence (even if encrypted)
+            const hasReasoningDetails = assistantMessage?.reasoning_details && Array.isArray(assistantMessage.reasoning_details) && assistantMessage.reasoning_details.length > 0;
+            if (enableReasoning && hasReasoningDetails) {
+                const reasoningTypes = assistantMessage.reasoning_details.map(item => item?.type).filter(Boolean);
+                try { console.log('[Reasoning][Detected][Initial]', { count: assistantMessage.reasoning_details.length, types: reasoningTypes }); } catch (_) {}
+            }
             // Collect reasoning from initial assistant message (if any)
             const initialReasoning = extractReasoningText(assistantMessage);
             if (initialReasoning) {
@@ -1053,6 +1070,12 @@ client.on('messageCreate', async function(message) {
                 applyUsageFromResponse(response?.usage);
 
                 assistantMessage = response.choices?.[0]?.message;
+                // Check for reasoning_details presence (even if encrypted)
+                const hasReasoningDetails2 = assistantMessage?.reasoning_details && Array.isArray(assistantMessage.reasoning_details) && assistantMessage.reasoning_details.length > 0;
+                if (enableReasoning && hasReasoningDetails2) {
+                    const reasoningTypes2 = assistantMessage.reasoning_details.map(item => item?.type).filter(Boolean);
+                    try { console.log('[Reasoning][Detected][FollowUp]', { count: assistantMessage.reasoning_details.length, types: reasoningTypes2 }); } catch (_) {}
+                }
                 // Collect reasoning from follow-up assistant message (if any)
                 const followReasoning = extractReasoningText(assistantMessage);
                 if (followReasoning) {

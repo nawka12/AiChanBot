@@ -9,7 +9,7 @@ const path = require('path');
  * Based on https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview
  */
 
-const MAX_SEARCH_RESULTS = 3;
+const MAX_SEARCH_RESULTS = 6;
 
 // Notes system constants
 const NOTES_DIR = path.join(__dirname, 'notes');
@@ -269,7 +269,7 @@ async function executeToolCalls(toolCalls) {
         try {
           // Execute search
           const searchData = await searchQuery(input.query);
-          // Limit to 6 results maximum
+          // Limit results maximum
           const limitedResults = searchData.results ? searchData.results.slice(0, MAX_SEARCH_RESULTS) : [];
           result = {
             results: limitedResults,
