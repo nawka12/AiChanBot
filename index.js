@@ -652,8 +652,9 @@ client.on('messageCreate', async function(message) {
         const showThinkingProcess = userSettings[userId].showThinkingProcess;
         const thinkingBudget = userSettings[userId].thinkingBudget;
         // Reasoning policy:
-        // - If model is reasoning-only (effort or max_tokens), enable reasoning for all complexities
-        // - Otherwise, enable only for very complex prompts (auto mode)
+        // - Only enable reasoning if model supports it AND extended thinking is triggered (very_complex)
+        // - We do not force reasoning for "reasoning-only" styles anymore, allowing the API to default
+        // User requirement: "on non-reasoning model, simple and complex should not use reasoning, only very_complex uses reasoning"
         const clampedThinkingBudget = Math.max(MIN_THINKING_BUDGET, Math.min(thinkingBudget || DEFAULT_THINKING_BUDGET, 32000));
         const isOpenAIProvider = typeof selectedModel === 'string' && selectedModel.startsWith('openai/');
         
@@ -662,10 +663,8 @@ client.on('messageCreate', async function(message) {
         const reasoningStyle = await getReasoningStyle(selectedModel);
         console.log('[Reasoning][ModelStyle]', { model: selectedModel, reasoningStyle, isReasoningModel });
         
-        // Determine if the selected model is reasoning-only
-        const isReasoningOnly = (reasoningStyle === 'effort' || reasoningStyle === 'max_tokens');
-        // Only enable reasoning if model supports it AND (it's reasoning-only OR extended thinking is forced)
-        let enableReasoning = isReasoningModel && (isReasoningOnly || isExtendedThinking);
+        // Only enable reasoning if model supports it AND extended thinking is forced (very_complex)
+        let enableReasoning = isReasoningModel && isExtendedThinking;
         
         // Create messages array with conversation history
         let messages = [...conversationHistory];
@@ -747,6 +746,12 @@ client.on('messageCreate', async function(message) {
             
             // Make the first API request
             let openaiMessages = [...openaiMessagesBase];
+            
+            // Reasoning details preservation for multi-turn tool calling
+            // When using multi-turn tool calling, any reasoning details from previous turns must be preserved
+            // and passed back to the model in the assistant message.
+            // See: https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
+            
             // Ensure there are enough tokens for content beyond reasoning (apply to budget-style reasoning.max_tokens)
             const baseMaxTokens = isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS;
             const requiredForContent = 2048; // leave room for the final answer
@@ -774,7 +779,9 @@ client.on('messageCreate', async function(message) {
                         : reasoningStyle === 'enabled'
                             ? { enabled: true, exclude: !showThinkingProcess }
                             : undefined)
-                : undefined;
+                : (isReasoningModel 
+                    ? (reasoningStyle === 'effort' ? { effort: 'none' } : (reasoningStyle === 'enabled' ? { enabled: false } : undefined))
+                    : undefined);
 
             // Debug: log reasoning configuration for initial request
             try {
@@ -994,7 +1001,15 @@ client.on('messageCreate', async function(message) {
                 }
 
                 // Add the assistant message with tool calls to the API message list
-                openaiMessages.push(assistantMessage);
+                // CRITICAL: Preserve reasoning_details if available to maintain context for reasoning models
+                if (assistantMessage.reasoning_details) {
+                    // Create a copy to avoid mutating the original response object if reused elsewhere
+                    // We need to ensure we pass the complete message object including reasoning_details
+                    const messageToPush = { ...assistantMessage };
+                    openaiMessages.push(messageToPush);
+                } else {
+                    openaiMessages.push(assistantMessage);
+                }
 
                 // Add each tool result as a tool role message (include name per OpenRouter spec)
                 for (const tr of toolResults) {
@@ -1034,7 +1049,9 @@ client.on('messageCreate', async function(message) {
                             : reasoningStyle === 'enabled'
                                 ? { enabled: true, exclude: !showThinkingProcess }
                                 : undefined)
-                    : undefined;
+                    : (isReasoningModel 
+                        ? (reasoningStyle === 'effort' ? { effort: 'none' } : (reasoningStyle === 'enabled' ? { enabled: false } : undefined))
+                        : undefined);
 
                 // Debug: log reasoning configuration for follow-up request
                 try {
