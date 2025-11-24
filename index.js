@@ -12,7 +12,7 @@ const { getModels, getModelCosts, selectModelByComplexity } = require('./modelCo
 const { toOpenAIMessage, toOpenAITools, callChat, modelSupportsTools, modelSupportsReasoning, getReasoningStyle } = require('./openrouter.js');
 
 // Models
-const { BIGGER_MODEL, SMALLER_MODEL, COMPLEXITY_MODEL } = getModels();
+const { BIGGER_MODEL, SMALLER_MODEL, COMPLEXITY_MODEL, MODEL_SMALLER_THINKING, MODEL_BIGGER_THINKING } = getModels();
 const COMPLEXITY_CHECK_MODEL = COMPLEXITY_MODEL; // Independent configurable model for complexity check
 const MODEL_COSTS = getModelCosts();
 
@@ -663,8 +663,16 @@ client.on('messageCreate', async function(message) {
         const reasoningStyle = await getReasoningStyle(selectedModel);
         console.log('[Reasoning][ModelStyle]', { model: selectedModel, reasoningStyle, isReasoningModel });
         
-        // Only enable reasoning if model supports it AND extended thinking is forced (very_complex)
-        let enableReasoning = isReasoningModel && isExtendedThinking;
+        // Reasoning policy:
+        // - Enable reasoning if model supports it AND:
+        //   1. It is 'very_complex' (force extended thinking) OR
+        //   2. It is 'simple' and MODEL_SMALLER_THINKING is enabled OR
+        //   3. It is 'complex' and MODEL_BIGGER_THINKING is enabled
+        let enableReasoning = isReasoningModel && (
+            isExtendedThinking || 
+            (complexity === 'simple' && MODEL_SMALLER_THINKING) || 
+            (complexity === 'complex' && MODEL_BIGGER_THINKING)
+        );
         
         // Create messages array with conversation history
         let messages = [...conversationHistory];

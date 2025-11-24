@@ -9,9 +9,12 @@ I'm also declaring that the other branches are deprecated.
 ## Features
 
 ### 🤖 **Intelligent Model Selection**
-- **Smaller Model** (default to `openai/gpt-5-nano`): Fast responses for simple queries
-- **Bigger Model** (default to `openai/gpt-5-mini`): Advanced reasoning for complex problems
-- **Automatic Complexity Detection**: Bot automatically chooses the right model based on your query complexity (configurable separate complexity model via `OPENROUTER_MODEL_COMPLEXITY`)
+- **Smaller Model** (default to `openai/gpt-5-nano`): Fast responses for simple queries. Thinking mode optional via `MODEL_SMALLER_THINKING`.
+- **Bigger Model** (default to `openai/gpt-5-mini`): Advanced reasoning for complex problems. Thinking mode optional via `MODEL_BIGGER_THINKING`.
+- **Automatic Complexity Detection**: Bot automatically chooses the right model based on your query complexity.
+  - 'simple' -> Smaller Model
+  - 'complex' -> Bigger Model
+  - 'very_complex' -> Bigger Model with Extended Thinking (forced on)
 
 ### 🧠 **Reasoning Tokens & Thinking Mode**
 - Unified reasoning control via OpenRouter `reasoning` parameter (effort/budget/exclusion)
@@ -90,6 +93,11 @@ OPENROUTER_MODEL_BIGGER=openai/gpt-5-mini
 OPENROUTER_MODEL_HYBRID=
 OPENROUTER_MODEL_COMPLEXITY=openai/gpt-4.1-nano  # dedicated model for complexity checks
 
+# Thinking Configuration (Optional - defaults to false)
+# If set to true, enables thinking/reasoning even for simple/complex queries respectively
+MODEL_SMALLER_THINKING=false
+MODEL_BIGGER_THINKING=false
+
 # Model Cost Overrides (Optional - per million tokens)
 MODEL_SMALLER_COST_IN=0.05      # Smaller model input cost
 MODEL_SMALLER_COST_OUT=0.4      # Smaller model output cost
@@ -113,6 +121,8 @@ BOT_CREATOR_ID=your_discord_user_id
 - `OPENROUTER_MODEL_BIGGER`: Model used for complex queries (default: `openai/gpt-5-mini`)
 - `OPENROUTER_MODEL_HYBRID`: Optional alias that can provide the bigger model (fallback used by code)
 - `OPENROUTER_MODEL_COMPLEXITY`: Model used for complexity detection (default: `openai/gpt-4.1-nano`)
+- `MODEL_SMALLER_THINKING`: Set to `true` to enable thinking/reasoning for simple queries (default: `false`)
+- `MODEL_BIGGER_THINKING`: Set to `true` to enable thinking/reasoning for complex queries (default: `false`)
 
 **Cost Configuration:**
 - `MODEL_SMALLER_COST_IN/OUT`: Override costs for smaller model (per million tokens)
