@@ -297,6 +297,60 @@ async function scrapeFandom(url) {
 
 
 /**
+ * Check if a hostname resolves to a private/internal IP address
+ * Prevents SSRF attacks by blocking requests to internal networks
+ * @param {string} hostname - The hostname to check
+ * @returns {boolean} - True if the hostname is private/internal
+ */
+function isPrivateHost(hostname) {
+  // Block localhost variations
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+    return true;
+  }
+
+  // Block private IPv4 ranges
+  const privateIPv4Patterns = [
+    /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/,           // 10.0.0.0/8
+    /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/, // 172.16.0.0/12
+    /^192\.168\.\d{1,3}\.\d{1,3}$/,              // 192.168.0.0/16
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/,          // 127.0.0.0/8 (loopback)
+    /^169\.254\.\d{1,3}\.\d{1,3}$/,              // 169.254.0.0/16 (link-local)
+    /^0\.0\.0\.0$/,                              // 0.0.0.0
+  ];
+
+  for (const pattern of privateIPv4Patterns) {
+    if (pattern.test(hostname)) {
+      return true;
+    }
+  }
+
+  // Block private IPv6 ranges
+  const privateIPv6Patterns = [
+    /^::1$/,                    // Loopback
+    /^fe80:/i,                  // Link-local
+    /^fc00:/i,                  // Unique local
+    /^fd00:/i,                  // Unique local
+  ];
+
+  for (const pattern of privateIPv6Patterns) {
+    if (pattern.test(hostname)) {
+      return true;
+    }
+  }
+
+  // Block common internal hostnames
+  const internalHostnames = ['localhost', 'internal', 'intranet', 'corp', 'local'];
+  const lowerHostname = hostname.toLowerCase();
+  for (const internal of internalHostnames) {
+    if (lowerHostname === internal || lowerHostname.endsWith('.' + internal)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Scrape a single URL and return its content
  * Routes to specialized scrapers based on domain
  * @param {string} url - The URL to scrape
@@ -304,9 +358,28 @@ async function scrapeFandom(url) {
  */
 async function scrapeUrl(url) {
   console.log(`Scraping single URL: ${url}`);
-  
+
   // Validate URL format
   if (!url || !url.startsWith('http')) {
+    return {
+      url,
+      content: 'Invalid URL format',
+      title: 'Invalid URL'
+    };
+  }
+
+  // SSRF protection: Block requests to private/internal hosts
+  try {
+    const parsedUrl = new URL(url);
+    if (isPrivateHost(parsedUrl.hostname)) {
+      console.warn(`Blocked SSRF attempt to private host: ${parsedUrl.hostname}`);
+      return {
+        url,
+        content: 'Access to internal/private hosts is not allowed',
+        title: 'Blocked Request'
+      };
+    }
+  } catch (parseError) {
     return {
       url,
       content: 'Invalid URL format',

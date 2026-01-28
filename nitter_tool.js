@@ -310,7 +310,7 @@ function processSingleTweetHtml(html, nitterBase) {
         
         // Get tweet ID from URL or other means
         const tweetLinkHref = mainTweet.find('a.tweet-link').attr('href');
-        const tweetId = tweetLinkHref ? tweetLinkHref.split('/status/')[1]?.split('#')[0] : 
+        const tweetId = tweetLinkHref ? (tweetLinkHref.split('/status/')[1]?.split('#')?.[0] || '') :
                         mainTweet.attr('data-tweet-id') || '';
         
         // Get timestamp
@@ -431,6 +431,66 @@ function processSingleTweetHtml(html, nitterBase) {
 }
 
 /**
+ * Helper to build URLs for fetching tweets
+ * @param {string} nitterBase - Base URL of the Nitter instance
+ * @param {string} username - Normalized username
+ * @param {boolean} includeReplies - Whether to include replies
+ * @returns {string[]} - Array of URLs to fetch
+ */
+function buildTweetUrls(nitterBase, username, includeReplies) {
+    const urls = [`${nitterBase}/${username}`];
+    if (includeReplies) {
+        urls.push(`${nitterBase}/${username}/with_replies`);
+    }
+    return urls;
+}
+
+/**
+ * Helper to fetch and process tweets from URLs
+ * @param {string[]} urls - URLs to fetch
+ * @param {string} nitterBase - Base URL for processing
+ * @param {string|null} proxy - Optional CORS proxy prefix
+ * @returns {Promise<Object[]>} - Array of deduplicated, sorted tweets
+ */
+async function fetchAndProcessTweets(urls, nitterBase, proxy = null) {
+    const responses = await Promise.all(
+        urls.map(url => {
+            const fetchUrl = proxy ? `${proxy}${encodeURIComponent(url)}` : url;
+            return axios.get(fetchUrl, {
+                headers: {
+                    'User-Agent': getRandomUserAgent(),
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'DNT': '1'
+                },
+                timeout: 15000
+            });
+        })
+    );
+
+    // Process HTML responses
+    const allTweets = [];
+    for (const response of responses) {
+        if (!response.data) continue;
+        const tweetsFromPage = processTweetsHtml(response.data, nitterBase);
+        allTweets.push(...tweetsFromPage);
+    }
+
+    // Deduplicate tweets
+    const seenIds = new Set();
+    const uniqueTweets = [];
+    for (const tweet of allTweets) {
+        if (!seenIds.has(tweet.id)) {
+            seenIds.add(tweet.id);
+            uniqueTweets.push(tweet);
+        }
+    }
+
+    // Sort by timestamp (newest first)
+    return uniqueTweets.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+/**
  * Fetch and parse tweets from a Nitter instance
  * @param {string} username - Twitter username to fetch tweets for
  * @param {boolean} includeReplies - Whether to include replies (default: false)
@@ -438,71 +498,23 @@ function processSingleTweetHtml(html, nitterBase) {
  */
 async function fetchNitterTweets(username, includeReplies = false) {
     console.log(`Fetching tweets for @${username}, includeReplies: ${includeReplies}`);
-    
+
     if (!username) {
         throw new Error('Twitter username is required');
     }
-    
+
     // Normalize username - remove @ if present
     const normalizedUsername = username.startsWith('@') ? username.slice(1) : username;
-    
+
     // Try each Nitter instance
     for (const nitterBase of NITTER_INSTANCES) {
         console.log(`Trying Nitter instance: ${nitterBase}`);
-        
+        const urls = buildTweetUrls(nitterBase, normalizedUsername, includeReplies);
+
         // Try with CORS proxies first
         for (const proxy of corsProxies) {
             try {
-                // Define URLs to fetch
-                const urls = [
-                    `${nitterBase}/${normalizedUsername}`
-                ];
-                
-                // Add replies URL if includeReplies is true
-                if (includeReplies) {
-                    urls.push(`${nitterBase}/${normalizedUsername}/with_replies`);
-                }
-                
-                // Make the requests to each URL
-                const responses = await Promise.all(
-                    urls.map(url => 
-                        axios.get(`${proxy}${encodeURIComponent(url)}`, {
-                            headers: {
-                                'User-Agent': getRandomUserAgent(),
-                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                                'Accept-Language': 'en-US,en;q=0.5',
-                                'DNT': '1'
-                            },
-                            timeout: 15000
-                        })
-                    )
-                );
-                
-                // Process HTML responses
-                const allTweets = [];
-                
-                for (let i = 0; i < responses.length; i++) {
-                    if (!responses[i].data) continue;
-                    
-                    // Handle node.js environment (server-side) which doesn't have DOMParser
-                    const tweetsFromPage = processTweetsHtml(responses[i].data, nitterBase);
-                    allTweets.push(...tweetsFromPage);
-                }
-                
-                // Deduplicate tweets
-                const seenIds = new Set();
-                const uniqueTweets = [];
-                
-                for (const tweet of allTweets) {
-                    if (!seenIds.has(tweet.id)) {
-                        seenIds.add(tweet.id);
-                        uniqueTweets.push(tweet);
-                    }
-                }
-                
-                // Sort by timestamp (newest first)
-                const sortedTweets = uniqueTweets.sort((a, b) => b.timestamp - a.timestamp);
-                
+                const sortedTweets = await fetchAndProcessTweets(urls, nitterBase, proxy);
                 return {
                     tweets: sortedTweets,
                     source: nitterBase,
@@ -513,73 +525,22 @@ async function fetchNitterTweets(username, includeReplies = false) {
                 continue;
             }
         }
-        
+
         // If all proxies fail, try direct fetch
         try {
             console.log(`All proxies failed for ${nitterBase}, attempting direct fetch...`);
-            
-            // Define URLs to fetch
-            const urls = [
-                `${nitterBase}/${normalizedUsername}`
-            ];
-            
-            // Add replies URL if includeReplies is true
-            if (includeReplies) {
-                urls.push(`${nitterBase}/${normalizedUsername}/with_replies`);
-            }
-            
-            // Make the requests to each URL
-            const responses = await Promise.all(
-                urls.map(url => 
-                    axios.get(url, {
-                        headers: {
-                            'User-Agent': getRandomUserAgent(),
-                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                            'Accept-Language': 'en-US,en;q=0.5',
-                            'DNT': '1'
-                        },
-                        timeout: 15000
-                    })
-                )
-            );
-            
-            // Process HTML responses
-            const allTweets = [];
-            
-            for (let i = 0; i < responses.length; i++) {
-                if (!responses[i].data) continue;
-                
-                // Process the HTML with Cheerio for server-side
-                const tweetsFromPage = processTweetsHtml(responses[i].data, nitterBase);
-                allTweets.push(...tweetsFromPage);
-            }
-            
-            // Deduplicate tweets
-            const seenIds = new Set();
-            const uniqueTweets = [];
-            
-            for (const tweet of allTweets) {
-                if (!seenIds.has(tweet.id)) {
-                    seenIds.add(tweet.id);
-                    uniqueTweets.push(tweet);
-                }
-            }
-            
-            // Sort by timestamp (newest first)
-            const sortedTweets = uniqueTweets.sort((a, b) => b.timestamp - a.timestamp);
-            
+            const sortedTweets = await fetchAndProcessTweets(urls, nitterBase, null);
             return {
                 tweets: sortedTweets,
                 source: nitterBase,
                 username: normalizedUsername
             };
-            
         } catch (error) {
             console.warn(`Direct fetch from ${nitterBase} failed:`, error.message);
             // Continue to the next instance
         }
     }
-    
+
     // If all instances and methods fail, throw an error
     throw new Error('NITTER_UNAVAILABLE');
 }

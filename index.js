@@ -45,6 +45,13 @@ const startupTime = new Date();
 // Define token data file path
 const TOKEN_DATA_FILE = path.join(__dirname, 'token_data.json');
 
+// Define persistence file paths for conversations and settings
+const CONVERSATIONS_FILE = path.join(__dirname, 'conversations.json');
+const USER_SETTINGS_FILE = path.join(__dirname, 'user_settings.json');
+
+// Maximum conversation history length (prevents unbounded memory growth)
+const MAX_CONVERSATION_LENGTH = 50;
+
 // Define notes directories
 const NOTES_DIR = path.join(__dirname, 'notes');
 const USERS_DIR = path.join(NOTES_DIR, 'users');
@@ -286,9 +293,10 @@ const getPromptComplexity = async (prompt) => {
                 saveTokenData();
             }
 
-        if (['simple', 'complex', 'very_complex'].includes(complexity)) {
-            console.log(`Prompt complexity assessed as: ${complexity}`);
-            return complexity;
+        const normalizedComplexity = complexity.toLowerCase().trim();
+        if (['simple', 'complex', 'very_complex'].includes(normalizedComplexity)) {
+            console.log(`Prompt complexity assessed as: ${normalizedComplexity}`);
+            return normalizedComplexity;
         }
         console.warn(`Unexpected complexity assessment: ${complexity}. Defaulting to 'simple'.`);
         return 'simple';
@@ -299,9 +307,75 @@ const getPromptComplexity = async (prompt) => {
 };
 
 // State management
-const userConversations = {}; // For DM conversations
-const guildConversations = {}; // For guild/server conversations
-const userSettings = {}; // For user settings like extended thinking preferences
+let userConversations = {}; // For DM conversations
+let guildConversations = {}; // For guild/server conversations
+let userSettings = {}; // For user settings like extended thinking preferences
+
+// Persistence functions for conversations and user settings
+const saveConversations = () => {
+    try {
+        const data = {
+            userConversations,
+            guildConversations,
+            savedAt: new Date().toISOString()
+        };
+        fs.writeFileSync(CONVERSATIONS_FILE, JSON.stringify(data, null, 2));
+    } catch (error) {
+        console.error('Error saving conversations:', error);
+    }
+};
+
+const loadConversations = () => {
+    try {
+        if (fs.existsSync(CONVERSATIONS_FILE)) {
+            const data = fs.readFileSync(CONVERSATIONS_FILE, 'utf8');
+            const loaded = JSON.parse(data);
+            userConversations = loaded.userConversations || {};
+            guildConversations = loaded.guildConversations || {};
+            console.log('Loaded conversation history from file');
+        }
+    } catch (error) {
+        console.error('Error loading conversations:', error);
+    }
+};
+
+const saveUserSettings = () => {
+    try {
+        const data = {
+            settings: userSettings,
+            savedAt: new Date().toISOString()
+        };
+        fs.writeFileSync(USER_SETTINGS_FILE, JSON.stringify(data, null, 2));
+    } catch (error) {
+        console.error('Error saving user settings:', error);
+    }
+};
+
+const loadUserSettings = () => {
+    try {
+        if (fs.existsSync(USER_SETTINGS_FILE)) {
+            const data = fs.readFileSync(USER_SETTINGS_FILE, 'utf8');
+            const loaded = JSON.parse(data);
+            Object.assign(userSettings, loaded.settings || {});
+            console.log('Loaded user settings from file');
+        }
+    } catch (error) {
+        console.error('Error loading user settings:', error);
+    }
+};
+
+// Trim conversation history to prevent unbounded memory growth
+const trimConversation = (conversation) => {
+    if (conversation.length > MAX_CONVERSATION_LENGTH) {
+        // Keep the most recent messages
+        return conversation.slice(-MAX_CONVERSATION_LENGTH);
+    }
+    return conversation;
+};
+
+// Load persisted data on startup
+loadConversations();
+loadUserSettings();
 
 // Helper functions
 const processImages = async (attachments, userId, guildId, input, authorUsername, guildName, channelName) => {
@@ -312,10 +386,33 @@ const processImages = async (attachments, userId, guildId, input, authorUsername
         (guildConversations[guildId] || []) : 
         (userConversations[userId] || []);
 
+    const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB limit
+
     for (const [, attachment] of attachments) {
-        if (attachment.contentType.startsWith('image/')) {
+        if (attachment.contentType && attachment.contentType.startsWith('image/')) {
+            // Check image size before downloading
+            if (attachment.size && attachment.size > MAX_IMAGE_SIZE) {
+                console.warn(`Image too large: ${attachment.size} bytes (max: ${MAX_IMAGE_SIZE})`);
+                continue;
+            }
+
             const imageResponse = await fetch(attachment.url);
+
+            // Double-check content-length header
+            const contentLength = parseInt(imageResponse.headers.get('content-length') || '0', 10);
+            if (contentLength > MAX_IMAGE_SIZE) {
+                console.warn(`Image content-length too large: ${contentLength} bytes`);
+                continue;
+            }
+
             const imageBuffer = await imageResponse.buffer();
+
+            // Final size check after download
+            if (imageBuffer.length > MAX_IMAGE_SIZE) {
+                console.warn(`Downloaded image too large: ${imageBuffer.length} bytes`);
+                continue;
+            }
+
             const base64Image = imageBuffer.toString('base64');
 
             const imageContent = {
@@ -747,6 +844,41 @@ client.on('messageCreate', async function(message) {
             // Accumulate reasoning across responses (initial and follow-ups)
             const collectedReasoning = [];
 
+            // Helper to compute reasoning config and max tokens based on complexity
+            const computeReasoningParams = (complexity, enableReasoning, reasoningStyle, clampedThinkingBudget, isExtendedThinking, showThinkingProcess, isReasoningModel, userId) => {
+                const baseMaxTokens = isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS;
+                const requiredForContent = 2048;
+                let computedMaxTokens = baseMaxTokens;
+                let mappedEffort = null;
+                let allocatedBudget = null;
+
+                if (enableReasoning && reasoningStyle === 'effort') {
+                    mappedEffort = (complexity === 'very_complex') ? 'high' : (complexity === 'complex') ? 'medium' : 'low';
+                } else if (enableReasoning && reasoningStyle === 'max_tokens') {
+                    const baseBudget = clampedThinkingBudget;
+                    allocatedBudget = (complexity === 'very_complex') ? baseBudget : (complexity === 'complex') ? Math.floor(baseBudget / 2) : Math.max(MIN_THINKING_BUDGET, Math.floor(baseBudget / 3));
+                }
+
+                if (enableReasoning && reasoningStyle === 'max_tokens') {
+                    const minNeeded = (allocatedBudget || clampedThinkingBudget) + requiredForContent;
+                    computedMaxTokens = Math.max(baseMaxTokens, Math.min(EXTENDED_THINKING_MAX_TOKENS, minNeeded));
+                }
+
+                const reasoningConfig = enableReasoning
+                    ? (reasoningStyle === 'effort'
+                        ? { effort: (mappedEffort || (userSettings[userId]?.thinkingBudgetEffort || 'medium')), exclude: !showThinkingProcess, enabled: true }
+                        : reasoningStyle === 'max_tokens'
+                            ? { max_tokens: (allocatedBudget || clampedThinkingBudget), exclude: !showThinkingProcess, enabled: true }
+                            : reasoningStyle === 'enabled'
+                                ? { enabled: true, exclude: !showThinkingProcess }
+                                : undefined)
+                    : (isReasoningModel
+                        ? (reasoningStyle === 'effort' ? { effort: 'none' } : (reasoningStyle === 'enabled' ? { enabled: false } : undefined))
+                        : undefined);
+
+                return { computedMaxTokens, mappedEffort, allocatedBudget, reasoningConfig };
+            };
+
             // Send a "Thinking..." message while the model is generating
             let thinkingMessage = null;
             const startTime = Date.now();
@@ -759,37 +891,12 @@ client.on('messageCreate', async function(message) {
             // When using multi-turn tool calling, any reasoning details from previous turns must be preserved
             // and passed back to the model in the assistant message.
             // See: https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
-            
-            // Ensure there are enough tokens for content beyond reasoning (apply to budget-style reasoning.max_tokens)
-            const baseMaxTokens = isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS;
-            const requiredForContent = 2048; // leave room for the final answer
-            let computedMaxTokens = baseMaxTokens;
-            // Map effort/budget based on complexity when model is reasoning-only
-            let mappedEffort = null;
-            let allocatedBudget = null;
-            if (enableReasoning && reasoningStyle === 'effort') {
-                mappedEffort = (complexity === 'very_complex') ? 'high' : (complexity === 'complex') ? 'medium' : 'low';
-            } else if (enableReasoning && reasoningStyle === 'max_tokens') {
-                const baseBudget = clampedThinkingBudget;
-                allocatedBudget = (complexity === 'very_complex') ? baseBudget : (complexity === 'complex') ? Math.floor(baseBudget / 2) : Math.max(MIN_THINKING_BUDGET, Math.floor(baseBudget / 3));
-            }
-            // Only inflate top-level max_tokens when using budget-style reasoning.max_tokens
-            if (enableReasoning && reasoningStyle === 'max_tokens') {
-                const minNeeded = (allocatedBudget || clampedThinkingBudget) + requiredForContent;
-                computedMaxTokens = Math.max(baseMaxTokens, Math.min(EXTENDED_THINKING_MAX_TOKENS, minNeeded));
-            }
 
-            const reasoningConfig = enableReasoning
-                ? (reasoningStyle === 'effort'
-                    ? { effort: (mappedEffort || (userSettings[userId].thinkingBudgetEffort || 'medium')), exclude: !showThinkingProcess, enabled: true }
-                    : reasoningStyle === 'max_tokens'
-                        ? { max_tokens: (allocatedBudget || clampedThinkingBudget), exclude: !showThinkingProcess, enabled: true }
-                        : reasoningStyle === 'enabled'
-                            ? { enabled: true, exclude: !showThinkingProcess }
-                            : undefined)
-                : (isReasoningModel 
-                    ? (reasoningStyle === 'effort' ? { effort: 'none' } : (reasoningStyle === 'enabled' ? { enabled: false } : undefined))
-                    : undefined);
+            // Compute reasoning config using helper
+            const { computedMaxTokens, mappedEffort, allocatedBudget, reasoningConfig } = computeReasoningParams(
+                complexity, enableReasoning, reasoningStyle, clampedThinkingBudget,
+                isExtendedThinking, showThinkingProcess, isReasoningModel, userId
+            );
 
             // Debug: log reasoning configuration for initial request
             try {
@@ -956,7 +1063,11 @@ client.on('messageCreate', async function(message) {
                 try {
                     toolResults = await executeToolCalls(toolCalls.map(call => {
                         let args = {};
-                        try { args = JSON.parse(call.function?.arguments || '{}'); } catch (_) {}
+                        try {
+                            args = JSON.parse(call.function?.arguments || '{}');
+                        } catch (parseError) {
+                            console.error(`Failed to parse tool arguments for ${call.function?.name}:`, parseError.message, 'Raw:', call.function?.arguments);
+                        }
 
                         // Add context for note tool
                         if (call.function?.name === 'note') {
@@ -1032,34 +1143,11 @@ client.on('messageCreate', async function(message) {
                 }
 
                 // Get model's response with the tool results
-                // Recompute tokens in case budget applies
-                const baseMaxTokens2 = isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS;
-                let computedMaxTokens2 = baseMaxTokens2;
-                // Reuse mapped budget rules for follow-up
-                let mappedEffort2 = null;
-                let allocatedBudget2 = null;
-                if (enableReasoning && reasoningStyle === 'effort') {
-                    mappedEffort2 = (complexity === 'very_complex') ? 'high' : (complexity === 'complex') ? 'medium' : 'low';
-                } else if (enableReasoning && reasoningStyle === 'max_tokens') {
-                    const baseBudget2 = clampedThinkingBudget;
-                    allocatedBudget2 = (complexity === 'very_complex') ? baseBudget2 : (complexity === 'complex') ? Math.floor(baseBudget2 / 2) : Math.max(MIN_THINKING_BUDGET, Math.floor(baseBudget2 / 3));
-                }
-                if (enableReasoning && reasoningStyle === 'max_tokens') {
-                    const minNeeded2 = (allocatedBudget2 || clampedThinkingBudget) + 2048;
-                    computedMaxTokens2 = Math.max(baseMaxTokens2, Math.min(EXTENDED_THINKING_MAX_TOKENS, minNeeded2));
-                }
-
-                const reasoningConfig2 = enableReasoning
-                    ? (reasoningStyle === 'effort'
-                        ? { effort: (mappedEffort2 || (userSettings[userId].thinkingBudgetEffort || 'medium')), exclude: !showThinkingProcess, enabled: true }
-                        : reasoningStyle === 'max_tokens'
-                            ? { max_tokens: (allocatedBudget2 || clampedThinkingBudget), exclude: !showThinkingProcess, enabled: true }
-                            : reasoningStyle === 'enabled'
-                                ? { enabled: true, exclude: !showThinkingProcess }
-                                : undefined)
-                    : (isReasoningModel 
-                        ? (reasoningStyle === 'effort' ? { effort: 'none' } : (reasoningStyle === 'enabled' ? { enabled: false } : undefined))
-                        : undefined);
+                // Recompute reasoning params for follow-up request
+                const followUpParams = computeReasoningParams(
+                    complexity, enableReasoning, reasoningStyle, clampedThinkingBudget,
+                    isExtendedThinking, showThinkingProcess, isReasoningModel, userId
+                );
 
                 // Debug: log reasoning configuration for follow-up request
                 try {
@@ -1068,19 +1156,19 @@ client.on('messageCreate', async function(message) {
                         complexity,
                         reasoningStyle,
                         enableReasoning,
-                        computedMaxTokens: computedMaxTokens2,
-                        mappedEffort: mappedEffort2,
-                        allocatedBudget: allocatedBudget2,
-                        reasoningConfig: reasoningConfig2
+                        computedMaxTokens: followUpParams.computedMaxTokens,
+                        mappedEffort: followUpParams.mappedEffort,
+                        allocatedBudget: followUpParams.allocatedBudget,
+                        reasoningConfig: followUpParams.reasoningConfig
                     }, null, 2));
                 } catch (_) {}
 
                 response = await callChat({
                     model: selectedModel,
-                    max_tokens: computedMaxTokens2,
+                    max_tokens: followUpParams.computedMaxTokens,
                     messages: openaiMessages,
                     tools: openaiTools,
-                    reasoning: reasoningConfig2
+                    reasoning: followUpParams.reasoningConfig
                 });
                 try {
                     const choice0b = response?.choices?.[0] || {};
@@ -1213,40 +1301,46 @@ client.on('messageCreate', async function(message) {
             // Update the appropriate conversation history
             if (isDM) {
                 // Don't duplicate the user message if it already exists in the conversation history
-                if (userConversations[message.author.id].length === 0 || 
+                if (userConversations[message.author.id].length === 0 ||
                     userConversations[message.author.id][userConversations[message.author.id].length - 1].role !== "user") {
                     // Special case for storing image + text in conversation history
                     if (imageData) {
-                        userConversations[message.author.id].push({ 
-                            role: "user", 
+                        userConversations[message.author.id].push({
+                            role: "user",
                             content: [{ type: "text", text: `[Image with query: ${fullInput}]` }]
                         });
                     } else {
                         userConversations[message.author.id].push({ role: "user", content: fullInput });
                     }
                 }
-                userConversations[message.author.id].push({ 
-                    role: "assistant", 
-                    content: finalResponse 
+                userConversations[message.author.id].push({
+                    role: "assistant",
+                    content: finalResponse
                 });
+                // Trim and persist conversation
+                userConversations[message.author.id] = trimConversation(userConversations[message.author.id]);
+                saveConversations();
             } else {
                 // Don't duplicate the user message if it already exists in the conversation history
-                if (guildConversations[guildId].length === 0 || 
+                if (guildConversations[guildId].length === 0 ||
                     guildConversations[guildId][guildConversations[guildId].length - 1].role !== "user") {
                     // Special case for storing image + text in conversation history
                     if (imageData) {
-                        guildConversations[guildId].push({ 
-                            role: "user", 
+                        guildConversations[guildId].push({
+                            role: "user",
                             content: `[${message.author.username}]: [Image with query: ${fullInput}]`
                         });
                     } else {
                         guildConversations[guildId].push({ role: "user", content: processedInput });
                     }
                 }
-                guildConversations[guildId].push({ 
-                    role: "assistant", 
-                    content: finalResponse 
+                guildConversations[guildId].push({
+                    role: "assistant",
+                    content: finalResponse
                 });
+                // Trim and persist conversation
+                guildConversations[guildId] = trimConversation(guildConversations[guildId]);
+                saveConversations();
             }
         } catch (error) {
             console.error("API Error:", error);
@@ -1307,6 +1401,7 @@ client.on('interactionCreate', async interaction => {
         if (commandName === 'thinking_process') {
             const mode = options.getString('mode');
             userSettings[user.id].showThinkingProcess = mode === 'on';
+            saveUserSettings();
             await interaction.reply({
                 content: `Showing thinking process is now ${mode === 'on' ? 'ON' : 'OFF'}.`,
                 ephemeral: true
@@ -1327,6 +1422,7 @@ client.on('interactionCreate', async interaction => {
                     return;
                 }
                 userSettings[user.id].thinkingBudgetEffort = effort;
+                saveUserSettings();
                 replyText = `Set effort default to: ${effort}. Note: for reasoning-only OpenAI models, effort is auto-mapped by complexity: simple→low, complex→medium, very_complex→high.`;
             } else if (!isOpenAI && typeof raw === 'number') {
                 if (raw < MIN_THINKING_BUDGET) {
@@ -1334,6 +1430,7 @@ client.on('interactionCreate', async interaction => {
                     return;
                 }
                 userSettings[user.id].thinkingBudget = Math.min(raw, 32000);
+                saveUserSettings();
                 replyText = `Thinking budget set to ${userSettings[user.id].thinkingBudget} tokens. Note: for reasoning-only budget models, allocation is auto-mapped by complexity: simple→1/3, complex→1/2, very_complex→full.`;
             } else {
                 // Fallback
@@ -1349,12 +1446,14 @@ client.on('interactionCreate', async interaction => {
             
             if (isDM) {
                 userConversations[user.id] = [];
+                saveConversations();
                 await interaction.reply({
                     content: "Ai-chan's personal conversations with you have been reset.",
                     ephemeral: true
                 });
             } else {
                 guildConversations[guildId] = [];
+                saveConversations();
                 await interaction.reply({
                     content: "Ai-chan's server conversations have been reset.",
                     ephemeral: true

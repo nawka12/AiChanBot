@@ -788,46 +788,6 @@ async function executeToolCalls(toolCalls) {
   return toolResults;
 }
 
-// Add mock functions if scrapeUrl doesn't exist
-if (typeof scrapeUrl === 'undefined') {
-  console.log("Warning: Using mock implementation for scrapeUrl");
-  // Create mock implementation for testing
-  module.exports.scrapeUrl = async function(url) {
-    return {
-      url,
-      content: `Mock content for ${url}`,
-      title: `Mock Page Title for ${url}`
-    };
-  };
-}
-
-if (typeof scrapeMultipleUrls === 'undefined') {
-  console.log("Warning: Using mock implementation for scrapeMultipleUrls");
-  // Create mock implementation for testing
-  module.exports.scrapeMultipleUrls = async function(urls) {
-    return urls.map(url => ({
-      url,
-      content: `Mock content for ${url}`,
-      title: `Mock Page Title for ${url}`
-    }));
-  };
-}
-
-function parseNumber(text) {
-  if (!text || text.trim() === '') return 0;
-  text = text.trim();
-  
-  // Check if it's an abbreviated number
-  if (text.endsWith('k') || text.endsWith('K')) {
-    return Math.round(parseFloat(text.slice(0, -1)) * 1000);
-  }
-  if (text.endsWith('m') || text.endsWith('M')) {
-    return Math.round(parseFloat(text.slice(0, -1)) * 1000000);
-  }
-  
-  return parseInt(text, 10) || 0;
-}
-
 module.exports = {
   TOOL_SCHEMAS,
   executeToolCalls
