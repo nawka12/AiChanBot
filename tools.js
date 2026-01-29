@@ -1,6 +1,7 @@
 const { searchQuery } = require('./searchlogic.js');
 const { scrapeUrl, scrapeMultipleUrls } = require('./scraper.js');
 const { getTweets, getTweetByUrl, isTwitterUrl } = require('./nitter_tool.js');
+const scheduler = require('./scheduler.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -243,6 +244,56 @@ const TOOL_SCHEMAS = [
           type: "string",
           enum: ["user", "guild"],
           description: "SCOPE RESTRICTIONS: 'user' = personal notes accessible ONLY in DMs/private messages. 'guild' = server notes accessible ONLY in the specific guild where saved. Cross-context access is NOT allowed."
+        }
+      },
+      required: ["action", "scope"]
+    }
+  },
+  {
+    name: "schedule",
+    description: "Create timers (one-shot delayed tasks) or cron jobs (recurring scheduled tasks). Use for reminders, scheduled messages, or recurring AI-generated content. SCOPE RULES: 'user' scope for DMs only, 'guild' scope for server channels only. Guild scope requires 'Manage Server' permission.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["create", "list", "delete", "toggle"],
+          description: "Action to perform: create (new timer/cron), list (show all schedules), delete (remove schedule), toggle (enable/disable)"
+        },
+        taskType: {
+          type: "string",
+          enum: ["timer", "cron"],
+          description: "Task type: 'timer' for one-shot delayed execution (auto-deletes after running), 'cron' for recurring scheduled tasks"
+        },
+        name: {
+          type: "string",
+          description: "Optional name/description for the task (e.g., 'Morning Weather', 'Daily Reminder')"
+        },
+        schedule: {
+          type: "string",
+          description: "For timer: duration like '1 minute', '30 minutes', '2 hours'. For cron: cron expression like '0 8 * * *' (every day at 8 AM), '0 9 * * 1-5' (weekdays at 9 AM), '0 10 * * 0,6' (weekends at 10 AM)"
+        },
+        actionType: {
+          type: "string",
+          enum: ["preset", "ai"],
+          description: "What to do when triggered: 'preset' sends a fixed message, 'ai' generates an AI response from a prompt"
+        },
+        content: {
+          type: "string",
+          description: "Message to send (required for actionType 'preset')"
+        },
+        prompt: {
+          type: "string",
+          description: "Prompt for AI to generate response (required for actionType 'ai'). Example: 'Give me today\\'s weather for Jakarta'"
+        },
+        taskId: {
+          type: "string",
+          description: "Task ID (required for delete and toggle actions)"
+        },
+        scope: {
+          type: "string",
+          enum: ["user", "guild"],
+          description: "SCOPE RESTRICTIONS: 'user' = personal schedules in DMs only. 'guild' = server schedules in guild channels only (requires Manage Server permission)."
         }
       },
       required: ["action", "scope"]
@@ -763,10 +814,243 @@ async function executeToolCalls(toolCalls) {
           };
         }
       }
+      else if (name === "schedule") {
+        try {
+          const { action, taskType, name: taskName, schedule: scheduleExpr, actionType, content, prompt, taskId, scope } = input;
+
+          // Validate scope
+          if (!['user', 'guild'].includes(scope)) {
+            result = {
+              error: "Invalid scope. Must be 'user' or 'guild'",
+              action,
+              scope
+            };
+          } else {
+            // Get context from the tool input (passed from main handler)
+            const userId = input.userId;
+            const guildId = scope === 'guild' ? input.guildId : null;
+            const channelId = input.channelId;
+            const hasManageGuild = input.hasManageGuild;
+
+            // Validate context
+            if (!userId) {
+              result = {
+                error: "Missing user context. Cannot access schedules without user information.",
+                action,
+                scope
+              };
+            } else if (scope === 'guild' && !guildId) {
+              result = {
+                error: "Guild scope requires a valid guildId. Schedules can only be created in server channels.",
+                action,
+                scope
+              };
+            } else if (scope === 'user' && input.guildId) {
+              result = {
+                error: "User schedules can only be created in DMs (private messages). Use scope 'guild' for server schedules.",
+                action,
+                scope,
+                hint: "User schedules are private and only work in direct messages. For server-wide schedules, use scope 'guild'."
+              };
+            } else if (scope === 'guild' && !input.guildId) {
+              result = {
+                error: "Guild schedules can only be created within a server. Use scope 'user' for personal schedules in DMs.",
+                action,
+                scope,
+                hint: "Guild schedules are server-specific. For personal schedules in DMs, use scope 'user'."
+              };
+            } else if (scope === 'guild' && !hasManageGuild) {
+              result = {
+                error: "You need 'Manage Server' permission to create guild schedules.",
+                action,
+                scope
+              };
+            } else {
+              const scopeId = scope === 'guild' ? guildId : userId;
+
+              switch (action) {
+                case 'create':
+                  if (!taskType) {
+                    result = {
+                      error: "'taskType' is required (timer or cron)",
+                      action,
+                      scope
+                    };
+                  } else if (!scheduleExpr) {
+                    result = {
+                      error: "'schedule' is required. For timers: '1 minute', '30 minutes'. For cron: '0 8 * * *'",
+                      action,
+                      scope
+                    };
+                  } else if (!actionType) {
+                    result = {
+                      error: "'actionType' is required (preset or ai)",
+                      action,
+                      scope
+                    };
+                  } else if (!channelId) {
+                    result = {
+                      error: "Channel ID is required for scheduling",
+                      action,
+                      scope
+                    };
+                  } else {
+                    const createResult = scheduler.createSchedule(scope, scopeId, {
+                      taskType,
+                      name: taskName,
+                      schedule: scheduleExpr,
+                      duration: scheduleExpr,
+                      actionType,
+                      content,
+                      prompt,
+                      channelId,
+                      createdBy: userId
+                    });
+
+                    if (createResult.error) {
+                      result = {
+                        error: createResult.error,
+                        action,
+                        scope,
+                        current: createResult.current,
+                        max: createResult.max
+                      };
+                    } else {
+                      result = {
+                        success: true,
+                        action: 'create',
+                        scope,
+                        task: {
+                          id: createResult.task.id,
+                          name: createResult.task.name,
+                          taskType: createResult.task.taskType,
+                          scheduleDescription: createResult.task.scheduleDescription,
+                          actionType: createResult.task.actionType,
+                          enabled: createResult.task.enabled
+                        },
+                        message: `${taskType === 'timer' ? 'Timer' : 'Cron job'} "${createResult.task.name}" created successfully. ${createResult.task.scheduleDescription}.`
+                      };
+                    }
+                  }
+                  break;
+
+                case 'list':
+                  const schedules = scheduler.getSchedules(scope, scopeId);
+                  if (schedules.length === 0) {
+                    result = {
+                      success: true,
+                      action: 'list',
+                      scope,
+                      count: 0,
+                      schedules: [],
+                      message: `No ${scope} schedules found`
+                    };
+                  } else {
+                    const scheduleList = schedules.map(t => ({
+                      id: t.id,
+                      name: t.name,
+                      taskType: t.taskType,
+                      scheduleDescription: t.scheduleDescription,
+                      actionType: t.actionType,
+                      enabled: t.enabled,
+                      lastRun: t.lastRun,
+                      runCount: t.runCount
+                    }));
+                    result = {
+                      success: true,
+                      action: 'list',
+                      scope,
+                      count: schedules.length,
+                      schedules: scheduleList
+                    };
+                  }
+                  break;
+
+                case 'delete':
+                  if (!taskId) {
+                    result = {
+                      error: "'taskId' is required for delete action",
+                      action,
+                      scope
+                    };
+                  } else {
+                    const deleteResult = scheduler.deleteSchedule(scope, scopeId, taskId);
+                    if (deleteResult.error) {
+                      result = {
+                        error: deleteResult.error,
+                        action,
+                        scope,
+                        taskId
+                      };
+                    } else {
+                      result = {
+                        success: true,
+                        action: 'delete',
+                        scope,
+                        taskId,
+                        deletedTask: {
+                          name: deleteResult.deletedTask.name,
+                          taskType: deleteResult.deletedTask.taskType
+                        },
+                        message: `Schedule "${deleteResult.deletedTask.name}" deleted successfully`
+                      };
+                    }
+                  }
+                  break;
+
+                case 'toggle':
+                  if (!taskId) {
+                    result = {
+                      error: "'taskId' is required for toggle action",
+                      action,
+                      scope
+                    };
+                  } else {
+                    const toggleResult = scheduler.toggleSchedule(scope, scopeId, taskId);
+                    if (toggleResult.error) {
+                      result = {
+                        error: toggleResult.error,
+                        action,
+                        scope,
+                        taskId
+                      };
+                    } else {
+                      result = {
+                        success: true,
+                        action: 'toggle',
+                        scope,
+                        taskId,
+                        enabled: toggleResult.enabled,
+                        message: `Schedule "${toggleResult.task.name}" is now ${toggleResult.enabled ? 'enabled' : 'disabled'}`
+                      };
+                    }
+                  }
+                  break;
+
+                default:
+                  result = {
+                    error: `Unknown action: ${action}`,
+                    action,
+                    scope,
+                    available_actions: ['create', 'list', 'delete', 'toggle']
+                  };
+              }
+            }
+          }
+        } catch (scheduleError) {
+          console.error(`Schedule tool error:`, scheduleError);
+          result = {
+            error: `Schedule operation failed: ${scheduleError.message}`,
+            action: input.action,
+            scope: input.scope,
+            suggestion: "There was an issue with the scheduler. Please try again."
+          };
+        }
+      }
       else {
         result = {
           error: `Unknown tool: ${name}`,
-          suggestion: "Please use one of the available tools: web_search, web_scrape, multi_scrape, nitter_tweets, tweet_url_scrape, or note."
+          suggestion: "Please use one of the available tools: web_search, web_scrape, multi_scrape, nitter_tweets, tweet_url_scrape, note, or schedule."
         };
       }
     } catch (error) {

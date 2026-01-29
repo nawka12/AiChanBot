@@ -31,8 +31,23 @@ The model can call tools automatically - no special commands needed:
 - `multi_scrape` - Scrapes content from multiple URLs simultaneously
 - `nitter_tweets` - Fetches tweets from specific users
 - `tweet_url_scrape` - Scrapes individual tweet URLs
-
 - `note` - Manages personal or guild notes as a persistent knowledge base (scoped)
+- `schedule` - Creates timers and cron jobs for scheduled messages/reminders
+
+### ⏰ **Scheduled Tasks (Timers & Cron Jobs)**
+- **Timers**: One-shot delayed tasks that auto-delete after execution
+  - Example: "remind me in 30 minutes to check the oven"
+- **Cron Jobs**: Recurring scheduled tasks using cron expressions
+  - Example: "send weather for Jakarta every weekday at 8 AM"
+- **Action Types**:
+  - `preset`: Send a fixed message
+  - `ai`: Generate an AI response (with full tool support for web search, etc.)
+- **Scoping**:
+  - User schedules: Only in DMs, any user can create
+  - Guild schedules: Only in servers, requires "Manage Server" permission
+- **Limits**: 5 cron + 10 timers per user, 10 cron + 20 timers per guild
+- **Persistence**: Schedules survive bot restarts
+- **Timezone**: Asia/Jakarta (GMT+7)
 
 ### 🖼️ **Image Processing**
 - Upload images and ask questions about them
@@ -62,6 +77,10 @@ The model can call tools automatically - no special commands needed:
 - `/reset` - Reset conversation history
 - `/status` - View bot configuration and statistics
 - `/reset_tokens` - Reset token statistics (bot creator only)
+- `/schedule create` - Create a new timer or cron job
+- `/schedule list` - List all your scheduled tasks
+- `/schedule delete <id>` - Delete a scheduled task
+- `/schedule toggle <id>` - Enable/disable a scheduled task
 
 ## Dependencies
 
@@ -72,7 +91,8 @@ The model can call tools automatically - no special commands needed:
     "node-fetch": "^2.7.0",
     "dotenv": "^16.0.3",
     "axios": "^1.8.1",
-    "cheerio": "^1.0.0"
+    "cheerio": "^1.0.0",
+    "node-cron": "^4.2.1"
   }
 }
 ```
@@ -209,6 +229,38 @@ Examples:
 @Ai-chan What notes do you have about our build? (retrieves relevant notes in context)
 ```
 
+### Scheduled Tasks (Timers & Cron Jobs)
+Create timers and recurring tasks via natural language or slash commands.
+
+**Via @mention (natural language):**
+```
+@Ai-chan set a timer for 5 minutes
+@Ai-chan remind me in 1 hour to take a break
+@Ai-chan send weather for Jakarta every weekday at 8 AM
+@Ai-chan post a motivational quote every Monday at 9 AM
+```
+
+**Via slash commands:**
+```
+/schedule create type:Timer schedule:30 minutes action:Send message content:Time to stretch!
+/schedule create type:Cron schedule:0 8 * * 1-5 action:AI response prompt:Give me today's weather for Jakarta
+/schedule list
+/schedule delete id:abc123
+/schedule toggle id:abc123
+```
+
+**Common cron expressions:**
+| Expression | Description |
+|------------|-------------|
+| `* * * * *` | Every minute |
+| `0 * * * *` | Every hour |
+| `0 8 * * *` | Every day at 8 AM |
+| `0 9 * * 1-5` | Weekdays at 9 AM |
+| `0 10 * * 0,6` | Weekends at 10 AM |
+| `0 0 * * 1` | Every Monday at midnight |
+
+**Note:** AI-generated scheduled responses have full tool access (web search, scraping, etc.) to provide up-to-date information.
+
 ### Examples
 
 **Simple Query:**
@@ -255,8 +307,8 @@ Examples:
 - Safe content handling
 - Error recovery and graceful degradation
 - Automatic token data persistence (stored in `token_data.json`)
-
 - Notes persistence per user/guild (stored in `notes/users/*.json` and `notes/guilds/*.json`)
+- Scheduled tasks persistence (stored in `cronjobs/users/*.json` and `cronjobs/guilds/*.json`)
 
 ### Time & Locale
 - All dates/times displayed by the bot use Asia/Jakarta (GMT+7).
@@ -284,4 +336,4 @@ Created by **kayfahaarukku**
 
 ---
 
-*Last updated: Sept 2025*
+*Last updated: Jan 2026*

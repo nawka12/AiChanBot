@@ -13,6 +13,8 @@ yarn-error.log*
 
 # User data
 notes/
+cronjobs/
+conversations.json
 
 # IDE specific files
 .idea

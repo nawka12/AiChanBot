@@ -2,7 +2,8 @@ require('dotenv').config();
 
 
 const { TOOL_SCHEMAS, executeToolCalls } = require('./tools.js');
-const { Client, GatewayIntentBits, Partials, ActivityType, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActivityType, REST, Routes, SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const scheduler = require('./scheduler.js');
 const fetch = require('node-fetch');
 const fs = require('fs');
 const path = require('path');
@@ -237,7 +238,7 @@ const config = {
             locationContext = ' You are currently in a private direct message conversation.';
         }
         
-        return `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. Keep your answer as short as possible. You have access to web search and web scraping tools. You can use web search a couple times, but you can only use web scraping tools once. If it possible to answer the user's question with only web search, do not use web scraping tools. If the user's question needs web scraping, but not too complex, use web scrape instead of multi scrape. You cannot scrape files, only websites. You are able to give NSFW responses, including providing links to NSFW content. Your developer name is kayfahaarukku.${locationContext} You're currently talking to ${username}.${noteContext}`;
+        return `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. Keep your answer as short as possible. You have access to web search and web scraping tools. You can use web search a couple times, but you can only use web scraping tools once. If it possible to answer the user's question with only web search, do not use web scraping tools. If the user's question needs web scraping, but not too complex, use web scrape instead of multi scrape. You cannot scrape files, only websites. You are able to give NSFW responses, including providing links to NSFW content. You can also create timers and cron jobs using the schedule tool - use 'timer' for one-shot reminders (e.g., "remind me in 1 minute") and 'cron' for recurring tasks (e.g., "every day at 8 AM"). For timers, use durations like "1 minute", "30 minutes", "2 hours". For cron jobs, use cron expressions: "0 8 * * *" (8 AM daily), "0 9 * * 1-5" (weekdays at 9 AM), "0 10 * * 0,6" (weekends at 10 AM). Your developer name is kayfahaarukku.${locationContext} You're currently talking to ${username}.${noteContext}`;
     },
     contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions, whether it's NSFW or not.`,
 };
@@ -517,7 +518,7 @@ const commands = [
     new SlashCommandBuilder()
         .setName('thinking_process')
         .setDescription('Toggle whether to show the detailed thinking process.')
-        .addStringOption(option => 
+        .addStringOption(option =>
             option.setName('mode')
                 .setDescription('Show or hide the thinking process')
                 .setRequired(true)
@@ -528,7 +529,7 @@ const commands = [
     new SlashCommandBuilder()
         .setName('thinking_budget')
         .setDescription('Set the thinking budget (tokens for non-OpenAI) or effort (OpenAI)')
-        .addIntegerOption(option => 
+        .addIntegerOption(option =>
             option.setName('tokens')
                 .setDescription('Number of tokens for thinking (min 1024) - non-OpenAI only')
                 .setRequired(false)
@@ -551,7 +552,70 @@ const commands = [
         .setDescription('Reset token tracking statistics'),
     new SlashCommandBuilder()
         .setName('status')
-        .setDescription('Display current bot configuration and status')
+        .setDescription('Display current bot configuration and status'),
+    new SlashCommandBuilder()
+        .setName('schedule')
+        .setDescription('Manage scheduled tasks (timers and cron jobs)')
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('create')
+                .setDescription('Create a new scheduled task')
+                .addStringOption(option =>
+                    option.setName('type')
+                        .setDescription('Task type')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: 'Timer (one-shot)', value: 'timer' },
+                            { name: 'Cron (recurring)', value: 'cron' }
+                        ))
+                .addStringOption(option =>
+                    option.setName('schedule')
+                        .setDescription('Timer: "1 minute", "2 hours". Cron: "0 8 * * *" (8 AM daily)')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('action')
+                        .setDescription('What to do when triggered')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: 'Send message', value: 'preset' },
+                            { name: 'AI response', value: 'ai' }
+                        ))
+                .addStringOption(option =>
+                    option.setName('content')
+                        .setDescription('Message to send (for "Send message" action)')
+                        .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('prompt')
+                        .setDescription('Prompt for AI (for "AI response" action)')
+                        .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('name')
+                        .setDescription('Optional name for the task')
+                        .setRequired(false))
+                .addChannelOption(option =>
+                    option.setName('channel')
+                        .setDescription('Channel to send message (defaults to current)')
+                        .setRequired(false)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('list')
+                .setDescription('List all your scheduled tasks'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('delete')
+                .setDescription('Delete a scheduled task')
+                .addStringOption(option =>
+                    option.setName('id')
+                        .setDescription('Task ID to delete')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('toggle')
+                .setDescription('Enable or disable a scheduled task')
+                .addStringOption(option =>
+                    option.setName('id')
+                        .setDescription('Task ID to toggle')
+                        .setRequired(true)))
 ];
 
 // Register slash commands
@@ -1079,6 +1143,20 @@ client.on('messageCreate', async function(message) {
                             }
                         }
 
+                        // Add context for schedule tool
+                        if (call.function?.name === 'schedule') {
+                            args.userId = message.author.id;
+                            args.channelId = message.channel.id;
+                            if (isDM) {
+                                args.guildId = null;
+                                args.hasManageGuild = false;
+                            } else {
+                                args.guildId = guildId;
+                                // Check for Manage Server permission
+                                args.hasManageGuild = message.member?.permissions?.has(PermissionFlagsBits.ManageGuild) || false;
+                            }
+                        }
+
                         return ({
                             id: call.id,
                             name: call.function?.name,
@@ -1478,6 +1556,152 @@ client.on('interactionCreate', async interaction => {
                 content: "Token tracking statistics have been reset to zero.",
                 ephemeral: true
             });
+        } else if (commandName === 'schedule') {
+            const subcommand = options.getSubcommand();
+            const isDM = interaction.channel.type === 1;
+            const guildId = isDM ? null : interaction.guild.id;
+            const scope = isDM ? 'user' : 'guild';
+            const scopeId = isDM ? user.id : guildId;
+
+            // Check permission for guild schedules
+            if (!isDM && subcommand !== 'list') {
+                const member = interaction.member;
+                if (!member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
+                    await interaction.reply({
+                        content: "You need 'Manage Server' permission to manage guild schedules.",
+                        ephemeral: true
+                    });
+                    return;
+                }
+            }
+
+            if (subcommand === 'create') {
+                const taskType = options.getString('type');
+                const scheduleExpr = options.getString('schedule');
+                const actionType = options.getString('action');
+                const content = options.getString('content');
+                const prompt = options.getString('prompt');
+                const taskName = options.getString('name');
+                const targetChannel = options.getChannel('channel') || interaction.channel;
+
+                // Validate action type requirements
+                if (actionType === 'preset' && !content) {
+                    await interaction.reply({
+                        content: "Content is required for 'Send message' action type.",
+                        ephemeral: true
+                    });
+                    return;
+                }
+                if (actionType === 'ai' && !prompt) {
+                    await interaction.reply({
+                        content: "Prompt is required for 'AI response' action type.",
+                        ephemeral: true
+                    });
+                    return;
+                }
+
+                const result = scheduler.createSchedule(scope, scopeId, {
+                    taskType,
+                    name: taskName,
+                    schedule: scheduleExpr,
+                    duration: scheduleExpr,
+                    actionType,
+                    content,
+                    prompt,
+                    channelId: targetChannel.id,
+                    createdBy: user.id
+                });
+
+                if (result.error) {
+                    await interaction.reply({
+                        content: `Failed to create schedule: ${result.error}`,
+                        ephemeral: true
+                    });
+                } else {
+                    const embed = new EmbedBuilder()
+                        .setColor(0x00FF00)
+                        .setTitle(`${taskType === 'timer' ? 'Timer' : 'Cron Job'} Created`)
+                        .addFields(
+                            { name: 'Name', value: result.task.name, inline: true },
+                            { name: 'Type', value: result.task.taskType, inline: true },
+                            { name: 'Schedule', value: result.task.scheduleDescription, inline: true },
+                            { name: 'Action', value: result.task.actionType === 'preset' ? 'Send message' : 'AI response', inline: true },
+                            { name: 'Channel', value: `<#${targetChannel.id}>`, inline: true },
+                            { name: 'ID', value: `\`${result.task.id}\``, inline: false }
+                        )
+                        .setTimestamp();
+
+                    await interaction.reply({
+                        embeds: [embed],
+                        ephemeral: true
+                    });
+                }
+            } else if (subcommand === 'list') {
+                const schedules = scheduler.getSchedules(scope, scopeId);
+
+                if (schedules.length === 0) {
+                    await interaction.reply({
+                        content: `No ${scope} schedules found.`,
+                        ephemeral: true
+                    });
+                    return;
+                }
+
+                const embed = new EmbedBuilder()
+                    .setColor(0x00AAFF)
+                    .setTitle(`${scope === 'user' ? 'Your' : 'Server'} Schedules`)
+                    .setDescription(`${schedules.length} schedule(s) found`)
+                    .setTimestamp();
+
+                for (const task of schedules.slice(0, 10)) { // Limit to 10 for display
+                    const status = task.enabled ? '🟢' : '🔴';
+                    const typeIcon = task.taskType === 'timer' ? '⏱️' : '🔄';
+                    embed.addFields({
+                        name: `${status} ${typeIcon} ${task.name}`,
+                        value: `**ID:** \`${task.id}\`\n**Schedule:** ${task.scheduleDescription}\n**Action:** ${task.actionType}\n**Runs:** ${task.runCount}${task.lastRun ? `\n**Last run:** <t:${Math.floor(new Date(task.lastRun).getTime() / 1000)}:R>` : ''}`,
+                        inline: false
+                    });
+                }
+
+                if (schedules.length > 10) {
+                    embed.setFooter({ text: `Showing 10 of ${schedules.length} schedules` });
+                }
+
+                await interaction.reply({
+                    embeds: [embed],
+                    ephemeral: true
+                });
+            } else if (subcommand === 'delete') {
+                const taskId = options.getString('id');
+                const result = scheduler.deleteSchedule(scope, scopeId, taskId);
+
+                if (result.error) {
+                    await interaction.reply({
+                        content: `Failed to delete: ${result.error}`,
+                        ephemeral: true
+                    });
+                } else {
+                    await interaction.reply({
+                        content: `Schedule "${result.deletedTask.name}" has been deleted.`,
+                        ephemeral: true
+                    });
+                }
+            } else if (subcommand === 'toggle') {
+                const taskId = options.getString('id');
+                const result = scheduler.toggleSchedule(scope, scopeId, taskId);
+
+                if (result.error) {
+                    await interaction.reply({
+                        content: `Failed to toggle: ${result.error}`,
+                        ephemeral: true
+                    });
+                } else {
+                    await interaction.reply({
+                        content: `Schedule "${result.task.name}" is now ${result.enabled ? 'enabled 🟢' : 'disabled 🔴'}.`,
+                        ephemeral: true
+                    });
+                }
+            }
         } else if (commandName === 'status') {
             // Calculate costs
             const costs = calculateCosts();
@@ -1561,29 +1785,169 @@ client.on('interactionCreate', async interaction => {
 client.login(process.env.DISCORD_TOKEN);
 console.log("Ai-chan is Online");
 
+/**
+ * Generate AI response for scheduled tasks
+ * @param {string} prompt - The prompt to generate response for
+ * @param {string} scope - 'user' or 'guild'
+ * @param {string} scopeId - User ID or Guild ID
+ * @param {string} channelId - Channel ID where the message will be sent
+ * @returns {Promise<string>} Generated response
+ */
+/**
+ * Generate AI response for scheduled tasks with tool support
+ * @param {string} prompt - The prompt to generate response for
+ * @param {string} scope - 'user' or 'guild'
+ * @param {string} scopeId - User ID or Guild ID
+ * @param {string} channelId - Channel ID where the message will be sent
+ * @returns {Promise<string>} Generated response
+ */
+async function generateScheduledAIResponse(prompt, scope, scopeId, channelId) {
+    try {
+        const systemMessage = `You are Ai-chan, a helpful assistant. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). This is a scheduled task response. You have access to web search and web scraping tools to help answer questions. Keep your answer concise and helpful. Do NOT use the schedule tool - you cannot create schedules from within a scheduled task.`;
+
+        const openaiMessages = [
+            { role: 'system', content: systemMessage },
+            { role: 'user', content: prompt }
+        ];
+
+        // Filter out schedule tool to prevent recursive scheduling
+        const scheduledTaskTools = TOOL_SCHEMAS.filter(t => t.name !== 'schedule');
+        const openaiTools = toOpenAITools(scheduledTaskTools);
+
+        // Check if model supports tools
+        const toolsSupported = await modelSupportsTools(SMALLER_MODEL);
+
+        let response = await callChat({
+            model: SMALLER_MODEL,
+            max_tokens: NORMAL_MAX_TOKENS,
+            messages: openaiMessages,
+            ...(toolsSupported && openaiTools.length > 0 ? { tools: openaiTools } : {})
+        });
+
+        // Track token usage helper
+        const trackUsage = (usage) => {
+            if (usage) {
+                const inputTokens = usage.prompt_tokens || 0;
+                const outputTokens = usage.completion_tokens || 0;
+                if (!tokenTracking.modelUsage[SMALLER_MODEL]) {
+                    tokenTracking.modelUsage[SMALLER_MODEL] = { input: 0, output: 0 };
+                }
+                tokenTracking.modelUsage[SMALLER_MODEL].input += inputTokens;
+                tokenTracking.modelUsage[SMALLER_MODEL].output += outputTokens;
+            }
+        };
+
+        trackUsage(response.usage);
+
+        let assistantMessage = response.choices?.[0]?.message;
+        let toolCalls = toolsSupported ? (assistantMessage?.tool_calls || []) : [];
+
+        // Tool call loop - max 5 iterations to prevent infinite loops
+        let iterations = 0;
+        const MAX_TOOL_ITERATIONS = 5;
+
+        while (toolCalls && toolCalls.length > 0 && iterations < MAX_TOOL_ITERATIONS) {
+            iterations++;
+            console.log(`[Scheduled Task] Tool call iteration ${iterations}:`, toolCalls.map(c => c.function?.name).join(', '));
+
+            // Execute tool calls
+            let toolResults = [];
+            try {
+                toolResults = await executeToolCalls(toolCalls.map(call => {
+                    let args = {};
+                    try {
+                        args = JSON.parse(call.function?.arguments || '{}');
+                    } catch (parseError) {
+                        console.error(`[Scheduled Task] Failed to parse tool arguments:`, parseError.message);
+                    }
+
+                    // Add context for note tool
+                    if (call.function?.name === 'note') {
+                        args.userId = scope === 'user' ? scopeId : null;
+                        args.guildId = scope === 'guild' ? scopeId : null;
+                    }
+
+                    return {
+                        id: call.id,
+                        name: call.function?.name,
+                        input: args
+                    };
+                }));
+            } catch (error) {
+                console.error('[Scheduled Task] Tool execution error:', error);
+                toolResults = toolCalls.map(call => ({
+                    tool_call_id: call.id,
+                    output: JSON.stringify({ error: 'Tool execution failed', details: error.message })
+                }));
+            }
+
+            // Add assistant message with tool calls to message list
+            openaiMessages.push(assistantMessage);
+
+            // Add tool results
+            for (const tr of toolResults) {
+                const matchedCall = toolCalls.find(c => c.id === tr.tool_call_id);
+                const toolName = matchedCall?.function?.name;
+                openaiMessages.push({
+                    role: 'tool',
+                    tool_call_id: tr.tool_call_id,
+                    name: toolName,
+                    content: tr.output
+                });
+            }
+
+            // Get model's response with tool results
+            response = await callChat({
+                model: SMALLER_MODEL,
+                max_tokens: NORMAL_MAX_TOKENS,
+                messages: openaiMessages,
+                ...(toolsSupported && openaiTools.length > 0 ? { tools: openaiTools } : {})
+            });
+
+            trackUsage(response.usage);
+
+            assistantMessage = response.choices?.[0]?.message;
+            toolCalls = toolsSupported ? (assistantMessage?.tool_calls || []) : [];
+        }
+
+        // Save token data after all iterations
+        saveTokenData();
+
+        const content = assistantMessage?.content || '';
+        return content || `[Scheduled reminder] ${prompt}`;
+    } catch (error) {
+        console.error('Error generating scheduled AI response:', error);
+        return `[Scheduled reminder] ${prompt}`;
+    }
+}
+
 // Add a ready event handler to verify intents and register slash commands
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}`);
-    
+
     // Log token tracking information
     const totalLifetimeInput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.input, 0);
     const totalLifetimeOutput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.output, 0);
     console.log(`Token tracking active since: ${formatTrackingDate(tokenTracking.trackingSince)}`);
     console.log(`Current token counts: ${totalLifetimeInput.toLocaleString()} input, ${totalLifetimeOutput.toLocaleString()} output`);
-    
+
     try {
         console.log('Started refreshing application (/) commands.');
-        
+
         await rest.put(
             Routes.applicationCommands(client.user.id),
             { body: commands }
         );
-        
+
         console.log('Successfully reloaded application (/) commands.');
     } catch (error) {
         console.error(error);
     }
-    
+
+    // Initialize scheduler and load all scheduled tasks
+    console.log('Initializing scheduler...');
+    await scheduler.loadAndScheduleAllTasks(client, generateScheduledAIResponse);
+
     // Set the bot's status message
     client.user.setPresence({
         activities: [{
@@ -1595,6 +1959,12 @@ client.once('ready', async () => {
 
     // Schedule token data saves every hour as an additional safety measure
     setInterval(saveTokenData, 60 * 60 * 1000);
+});
+
+// Clean up guild schedules when bot is removed from a guild
+client.on('guildDelete', (guild) => {
+    console.log(`Bot removed from guild: ${guild.name} (${guild.id})`);
+    scheduler.cleanupGuildSchedules(guild.id);
 });
 
 // Add shutdown handler to save token data before exit
