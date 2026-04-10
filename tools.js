@@ -298,6 +298,24 @@ const TOOL_SCHEMAS = [
       },
       required: ["action", "scope"]
     }
+  },
+  {
+    name: "ask_advisor",
+    description: "Consult your more powerful advisor model for complex reasoning, deep analysis, or expert strategic guidance. The advisor will provide a concise plan or analysis (under 600 tokens) that you should use to craft your final response. Use this sparingly — only for genuinely complex questions that require deep expertise, nuanced reasoning, or multi-step strategic thinking. One time use.",
+    input_schema: {
+      type: "object",
+      properties: {
+        question: {
+          type: "string",
+          description: "The specific question or problem you need the advisor to analyze"
+        },
+        context: {
+          type: "string",
+          description: "Brief context about the user's request or relevant background information to help the advisor understand the situation"
+        }
+      },
+      required: ["question"]
+    }
   }
 ];
 
