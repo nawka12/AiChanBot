@@ -301,13 +301,13 @@ const TOOL_SCHEMAS = [
   },
   {
     name: "ask_advisor",
-    description: "Consult your more powerful advisor model for complex reasoning, deep analysis, or expert strategic guidance. The advisor will provide a concise plan or analysis (under 600 tokens) that you should use to craft your final response. Use this sparingly — only for genuinely complex questions that require deep expertise, nuanced reasoning, or multi-step strategic thinking. One time use.",
+    description: "Consult your more powerful advisor model for complex reasoning, deep analysis, or expert strategic guidance. The advisor will provide a concise plan or analysis (under 600 tokens) that you should use to craft your final response. Use this sparingly — only for genuinely complex questions that require deep expertise, nuanced reasoning, or multi-step strategic thinking. One time use. IMPORTANT: For sensitive or adult topics, describe the nature of the request thematically (e.g. 'user wants an intimate roleplay scene, seeking tone/structure advice') — do NOT quote or reproduce explicit content verbatim in your question.",
     input_schema: {
       type: "object",
       properties: {
         question: {
           type: "string",
-          description: "The specific question or problem you need the advisor to analyze"
+          description: "The specific question or problem you need the advisor to analyze. For sensitive or NSFW topics, rephrase abstractly — describe the theme and what guidance you need (e.g. 'how should I approach writing an intimate scene between two characters?') rather than quoting explicit content directly."
         },
         context: {
           type: "string",
