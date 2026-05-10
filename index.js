@@ -1578,9 +1578,13 @@ client.on('interactionCreate', async interaction => {
                     return `**${model}**: ${usage.input.toLocaleString()} in, ${usage.output.toLocaleString()} out`;
                 }).join('\n');
 
+                const modelUsageField = usageDetails.length > 1024
+                    ? usageDetails.slice(0, usageDetails.lastIndexOf('\n', 1000)) + '\n...'
+                    : usageDetails;
+
                 statusEmbed.addFields(
-                    { name: 'Token Statistics', value: 
-                        `${usageDetails}\n\n` +
+                    { name: 'Model Usage', value: modelUsageField || 'No data', inline: false },
+                    { name: 'Aggregate Statistics', value:
                         `🧠 **Thinking**: ${(tokenTracking.lifetimeThinkingTokens || 0).toLocaleString()} tokens\n` +
                         `🛠️ **Tool Use**: ${(tokenTracking.lifetimeToolUseTokens || 0).toLocaleString()} tokens\n` +
                         `📊 **Avg Input/Message**: ${avgInputTokens} tokens\n` +
