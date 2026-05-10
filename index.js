@@ -187,10 +187,10 @@ try {
             // Ensure modelCosts is initialized
             if (!tokenTracking.modelCosts) tokenTracking.modelCosts = {};
 
-            // Ensure all models have costs defined - use MODEL_COSTS as fallback
+            // Always apply current env-var costs for configured models (overrides stale saved values)
             const allModels = [BIGGER_MODEL, SMALLER_MODEL];
             for (const model of allModels) {
-                if (!tokenTracking.modelCosts[model] && MODEL_COSTS[model]) {
+                if (MODEL_COSTS[model]) {
                     tokenTracking.modelCosts[model] = { ...MODEL_COSTS[model] };
                 }
             }

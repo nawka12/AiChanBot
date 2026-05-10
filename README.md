@@ -9,12 +9,9 @@ I'm also declaring that the other branches are deprecated.
 ## Features
 
 ### 🤖 **Intelligent Model Selection**
-- **Smaller Model** (default to `openai/gpt-5-nano`): Fast responses for simple queries. Thinking mode optional via `MODEL_SMALLER_THINKING`.
-- **Bigger Model** (default to `openai/gpt-5-mini`): Advanced reasoning for complex problems. Thinking mode optional via `MODEL_BIGGER_THINKING`.
-- **Automatic Complexity Detection**: Bot automatically chooses the right model based on your query complexity.
-  - 'simple' -> Smaller Model
-  - 'complex' -> Bigger Model
-  - 'very_complex' -> Bigger Model with Extended Thinking (forced on)
+- **Smaller Model** (default to `openai/gpt-5-nano`): Handles all queries by default. Thinking mode optional via `MODEL_SMALLER_THINKING`.
+- **Bigger Model** (default to `openai/gpt-5-mini`): Consulted on-demand as a strategic advisor via the `ask_advisor` tool. Thinking mode optional via `MODEL_BIGGER_THINKING`.
+- **Advisor Strategy**: The smaller model always executes first. When it encounters a genuinely complex question, it can invoke `ask_advisor` to get concise guidance (~600 tokens) from the bigger model, then use that guidance to craft the final response. This is more cost-efficient than always routing complex queries to the bigger model.
 
 ### 🧠 **Reasoning Tokens & Thinking Mode**
 - Unified reasoning control via OpenRouter `reasoning` parameter (effort/budget/exclusion)
@@ -33,6 +30,7 @@ The model can call tools automatically - no special commands needed:
 - `tweet_url_scrape` - Scrapes individual tweet URLs
 - `note` - Manages personal or guild notes as a persistent knowledge base (scoped)
 - `schedule` - Creates timers and cron jobs for scheduled messages/reminders
+- `ask_advisor` - Consults the bigger model for strategic guidance on complex questions (used internally, not user-invokable)
 
 ### ⏰ **Scheduled Tasks (Timers & Cron Jobs)**
 - **Timers**: One-shot delayed tasks that auto-delete after execution
@@ -273,7 +271,7 @@ Create timers and recurring tasks via natural language or slash commands.
 ```
 @Ai-chan Write a detailed business plan for a tech startup focusing on AI-powered education tools
 ```
-*Automatically switches to bigger model with extended thinking*
+*Smaller model may invoke `ask_advisor` to get strategic guidance from the bigger model before responding*
 
 **Image Analysis:**
 ```
@@ -336,4 +334,4 @@ Created by **kayfahaarukku**
 
 ---
 
-*Last updated: Jan 2026*
+*Last updated: Apr 2026*
