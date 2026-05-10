@@ -301,7 +301,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: "ask_advisor",
-    description: "Consult your more powerful advisor model for complex reasoning, deep analysis, or expert strategic guidance. The advisor will provide a concise plan or analysis (under 600 tokens) that you should use to craft your final response. Use this sparingly — only for genuinely complex questions that require deep expertise, nuanced reasoning, or multi-step strategic thinking. One time use. IMPORTANT: For sensitive or adult topics, describe the nature of the request thematically (e.g. 'user wants an intimate roleplay scene, seeking tone/structure advice') — do NOT quote or reproduce explicit content verbatim in your question.",
+    description: "Consult your more powerful advisor model for complex reasoning, deep analysis, or expert strategic guidance. The advisor will provide a concise plan or analysis (under 600 tokens) that you should use to craft your final response. Use this sparingly — only for genuinely complex questions that require deep expertise, nuanced reasoning, or multi-step strategic thinking. Can be called up to 5 times per response if needed (e.g. to rephrase a rejected question and retry). IMPORTANT: For sensitive or adult topics, describe the nature of the request thematically (e.g. 'user wants an intimate roleplay scene, seeking tone/structure advice') — do NOT quote or reproduce explicit content verbatim in your question.",
     input_schema: {
       type: "object",
       properties: {
