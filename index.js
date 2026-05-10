@@ -834,6 +834,8 @@ client.on('messageCreate', async function(message) {
 
             // Accumulate reasoning across responses (initial and follow-ups)
             const collectedReasoning = [];
+            // Accumulate advisor responses to show in thinking process
+            const collectedAdvisorAdvice = [];
 
             // Helper to compute reasoning config and max tokens for the executor model
             const computeReasoningParams = (enableReasoning, reasoningStyle, clampedThinkingBudget, showThinkingProcess, isReasoningModel, userId) => {
@@ -906,6 +908,8 @@ client.on('messageCreate', async function(message) {
             let requestInputTokens = 0;
             let requestOutputTokens = 0;
             let requestCacheCreationInputTokens = 0;
+            let advisorInputTokens = 0;
+            let advisorOutputTokens = 0;
             let requestCacheReadInputTokens = 0;
 
             const applyUsageFromResponse = (usage) => {
@@ -1130,7 +1134,7 @@ client.on('messageCreate', async function(message) {
                         const advisorMessages = [
                             {
                                 role: 'system',
-                                content: `You are a strategic advisor for Ai-chan, a Discord AI assistant. Your role is to analyze complex questions and provide concise, actionable guidance that Ai-chan can use to craft her response.\n\nProvide:\n1. Key insights or relevant facts about the topic\n2. A recommended approach for answering\n3. Any important caveats or nuances to keep in mind\n\nBe specific and strategic. Keep your response under 600 tokens. You are NOT directly responding to the user — you are advising Ai-chan on how to respond.`
+                                content: `You are a strategic advisor for Ai-chan, a Discord AI assistant. Your role is to analyze complex questions and provide concise, actionable guidance that Ai-chan can use to craft her response.\n\nProvide:\n1. Key insights or relevant facts about the topic\n2. A recommended approach for answering\n3. Any important caveats or nuances to keep in mind\n\nBe specific and strategic. Keep your response under 2000 tokens. You are NOT directly responding to the user — you are advising Ai-chan on how to respond.`
                             },
                             {
                                 role: 'user',
@@ -1143,7 +1147,7 @@ client.on('messageCreate', async function(message) {
                         const advisorResponse = await callChat({
                             model: BIGGER_MODEL,
                             messages: advisorMessages,
-                            max_tokens: 700
+                            max_tokens: 2000
                         });
 
                         // Track advisor token usage under BIGGER_MODEL
@@ -1159,12 +1163,15 @@ client.on('messageCreate', async function(message) {
                             }
                             tokenTracking.modelUsage[BIGGER_MODEL].input += advInput;
                             tokenTracking.modelUsage[BIGGER_MODEL].output += advOutput;
+                            advisorInputTokens += advInput;
+                            advisorOutputTokens += advOutput;
                             console.log(`[Advisor] Usage (${BIGGER_MODEL}): ${advInput} input, ${advOutput} output tokens.`);
                             saveTokenData();
                         }
 
                         const advisorAdvice = advisorResponse.choices?.[0]?.message?.content || 'No guidance provided.';
                         console.log('[Advisor] Guidance received:', advisorAdvice.slice(0, 200));
+                        if (showThinkingProcess) collectedAdvisorAdvice.push(advisorAdvice);
 
                         toolResults.push({
                             tool_call_id: advisorCall.id,
@@ -1289,7 +1296,10 @@ client.on('messageCreate', async function(message) {
             const modelCosts = getCostForModel(selectedModel);
             const inputCost = (requestInputTokens / 1000000) * modelCosts.input;
             const outputCost = (requestOutputTokens / 1000000) * modelCosts.output;
-            const totalCost = inputCost + outputCost;
+            const advisorCosts = getCostForModel(BIGGER_MODEL);
+            const advisorInputCost = (advisorInputTokens / 1000000) * advisorCosts.input;
+            const advisorOutputCost = (advisorOutputTokens / 1000000) * advisorCosts.output;
+            const totalCost = inputCost + outputCost + advisorInputCost + advisorOutputCost;
 
             // Cache info summary for this request
             let cacheInfo = '';
@@ -1304,7 +1314,10 @@ client.on('messageCreate', async function(message) {
             if (thinkingTokenCount > 0) {
                 console.log(`Thinking tokens: ${thinkingTokenCount} (included in input tokens)`);
             }
-            console.log(`Cost of this request: $${totalCost.toFixed(6)} ($${inputCost.toFixed(6)} for input, $${outputCost.toFixed(6)} for output)`);
+            const advisorCostNote = (advisorInputTokens > 0)
+                ? ` + advisor $${(advisorInputCost + advisorOutputCost).toFixed(6)} (${advisorInputTokens}in/${advisorOutputTokens}out)`
+                : '';
+            console.log(`Cost of this request: $${totalCost.toFixed(6)} ($${inputCost.toFixed(6)} for input, $${outputCost.toFixed(6)} for output${advisorCostNote})`);
 
             const totalLifetimeInput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.input, 0);
             const totalLifetimeOutput = Object.values(tokenTracking.modelUsage).reduce((sum, usage) => sum + usage.output, 0);
@@ -1325,8 +1338,11 @@ client.on('messageCreate', async function(message) {
 
             // Prepare final response text
             let finalResponse = assistantMessage?.content || '';
-            const reasoningText = (showThinkingProcess && collectedReasoning.length > 0)
-                ? collectedReasoning.join('\n\n')
+            const advisorSection = (showThinkingProcess && collectedAdvisorAdvice.length > 0)
+                ? '\n\n## 🎓 Advisor Guidance\n' + collectedAdvisorAdvice.join('\n\n---\n\n')
+                : '';
+            const reasoningText = (showThinkingProcess && (collectedReasoning.length > 0 || advisorSection))
+                ? collectedReasoning.join('\n\n') + advisorSection
                 : '';
             if ((!finalResponse || finalResponse.trim() === '') && imageDescriptions) {
                 finalResponse = imageDescriptions;
