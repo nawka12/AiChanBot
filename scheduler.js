@@ -20,9 +20,6 @@ const LIMITS = {
     GUILD_MAX_TIMERS: 20
 };
 
-// Minimum interval for cron jobs (1 minute)
-const MIN_CRON_INTERVAL_MS = 60 * 1000;
-
 // In-memory registry for active schedules
 // taskId -> { type: 'cron' | 'timer', handler: CronJob | TimeoutId, scope: 'user' | 'guild', scopeId: string }
 const activeSchedules = new Map();
@@ -633,34 +630,6 @@ function cleanupGuildSchedules(guildId) {
     }
 }
 
-/**
- * Get task by ID
- * @param {string} scope - 'user' or 'guild'
- * @param {string} scopeId - User ID or Guild ID
- * @param {string} taskId - Task ID
- * @returns {Object|null} Task object or null
- */
-function getTaskById(scope, scopeId, taskId) {
-    const schedules = loadSchedules(scope, scopeId);
-    return schedules.find(t => t.id === taskId) || null;
-}
-
-/**
- * Update the Discord client reference
- * @param {Object} client - Discord client
- */
-function setDiscordClient(client) {
-    discordClient = client;
-}
-
-/**
- * Update the AI response generator reference
- * @param {Function} generator - AI response generator function
- */
-function setAIResponseGenerator(generator) {
-    aiResponseGenerator = generator;
-}
-
 module.exports = {
     ensureSchedulerDirectories,
     loadSchedules,
@@ -674,14 +643,9 @@ module.exports = {
     executeTask,
     loadAndScheduleAllTasks,
     cleanupGuildSchedules,
-    getTaskById,
     canCreateTask,
     isValidCron,
     parseDuration,
     describeCron,
     formatDuration,
-    setDiscordClient,
-    setAIResponseGenerator,
-    LIMITS,
-    activeSchedules
 };

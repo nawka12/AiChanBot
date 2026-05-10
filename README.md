@@ -104,12 +104,11 @@ Create a `.env` file in the root directory:
 DISCORD_TOKEN=your_discord_bot_token
 OPENROUTER_API_KEY=your_openrouter_api_key
 
-# Model Selection (Optional - defaults shown; complexity model is independent)
+# Model Selection (Optional - defaults shown)
 OPENROUTER_MODEL_SMALLER=openai/gpt-5-nano
 OPENROUTER_MODEL_BIGGER=openai/gpt-5-mini
 # Optional alias for bigger model used by older configs
 OPENROUTER_MODEL_HYBRID=
-OPENROUTER_MODEL_COMPLEXITY=openai/gpt-4.1-nano  # dedicated model for complexity checks
 
 # Thinking Configuration (Optional - defaults to false)
 # If set to true, enables thinking/reasoning even for simple/complex queries respectively
@@ -121,8 +120,6 @@ MODEL_SMALLER_COST_IN=0.05      # Smaller model input cost
 MODEL_SMALLER_COST_OUT=0.4      # Smaller model output cost
 MODEL_BIGGER_COST_IN=0.25       # Bigger model input cost
 MODEL_BIGGER_COST_OUT=2.0       # Bigger model output cost
-MODEL_COMPLEXITY_IN=0.10        # Complexity model input cost
-MODEL_COMPLEXITY_OUT=0.4        # Complexity model output cost
 
 # Admin Configuration (Optional)
 BOT_CREATOR_ID=your_discord_user_id

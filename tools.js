@@ -319,11 +319,36 @@ const TOOL_SCHEMAS = [
   }
 ];
 
-/**
- * Handles execution of tool calls from Claude
- * @param {Array} toolCalls - The tool calls from Claude's response
- * @returns {Promise<Array>} - A promise that resolves to an array of tool results
- */
+function formatTweetResult(tweetData, url) {
+    if (tweetData.error) {
+        return {
+            url,
+            error: tweetData.message,
+            content: null,
+            title: "Twitter Content"
+        };
+    }
+    const tweet = tweetData.tweet;
+    const content = `Tweet by ${tweet.author} (@${tweet.username.replace('@', '')}):\n\n${tweet.text}\n\n` +
+        `Posted: ${tweet.dateText}\n` +
+        `Stats: ${tweet.stats.likes} likes, ${tweet.stats.retweets} retweets, ${tweet.stats.replies} replies\n` +
+        (tweet.media.length > 0 ? `Media: ${tweet.media.length} items\n` : '') +
+        (tweet.isReply ? `Reply to: ${tweet.replyTo}\n` : '') +
+        (tweet.isQuote ? `Quote of: ${tweet.quotedFrom}\n` : '') +
+        (tweet.conversationTweets && tweet.conversationTweets.length > 0 ?
+            `\nConversation (${tweet.conversationTweets.length} related tweets):\n` +
+            tweet.conversationTweets.map(t => `- ${t.username}: ${t.text}`).join('\n') : '');
+
+    return {
+        url,
+        content,
+        title: `Tweet by ${tweet.author}`,
+        tweet_data: tweet,
+        source: tweetData.source,
+        nitter_url: tweetData.url
+    };
+}
+
 async function executeToolCalls(toolCalls) {
   const toolResults = [];
 
@@ -360,40 +385,10 @@ async function executeToolCalls(toolCalls) {
         try {
           const url = input.url;
           
-          // Check if the URL is a Twitter/X URL
           if (isTwitterUrl(url)) {
             console.log(`Detected Twitter/X URL, redirecting to tweet_url_scrape: ${url}`);
-            // Handle as a tweet URL scrape
             const tweetData = await getTweetByUrl(url);
-            
-            if (tweetData.error) {
-              result = { 
-                error: tweetData.message,
-                url: url,
-                suggestion: "The Twitter/X content could not be retrieved via Nitter. You can try viewing it directly on Twitter."
-              };
-            } else {
-              // Format tweet data as a web scrape result
-              const tweet = tweetData.tweet;
-              const content = `Tweet by ${tweet.author} (@${tweet.username.replace('@', '')}):\n\n${tweet.text}\n\n` +
-                      `Posted: ${tweet.dateText}\n` +
-                      `Stats: ${tweet.stats.likes} likes, ${tweet.stats.retweets} retweets, ${tweet.stats.replies} replies\n` +
-                      (tweet.media.length > 0 ? `Media: ${tweet.media.length} items\n` : '') +
-                      (tweet.isReply ? `Reply to: ${tweet.replyTo}\n` : '') +
-                      (tweet.isQuote ? `Quote of: ${tweet.quotedFrom}\n` : '') +
-                      (tweet.conversationTweets && tweet.conversationTweets.length > 0 ? 
-                        `\nConversation (${tweet.conversationTweets.length} related tweets):\n` + 
-                        tweet.conversationTweets.map(t => `- ${t.username}: ${t.text}`).join('\n') : '');
-              
-              result = {
-                url: url,
-                content: content,
-                title: `Tweet by ${tweet.author}`,
-                tweet_data: tweet,
-                source: tweetData.source,
-                nitter_url: tweetData.url
-              };
-            }
+            result = formatTweetResult(tweetData, url);
           } else {
             // Execute regular URL scrape
             const scrapeData = await scrapeUrl(url);
@@ -423,35 +418,8 @@ async function executeToolCalls(toolCalls) {
             urls.map(async (url) => {
               try {
                 if (isTwitterUrl(url)) {
-                  // Handle as a tweet URL scrape
                   const tweetData = await getTweetByUrl(url);
-                  
-                  if (tweetData.error) {
-                    return {
-                      url,
-                      error: tweetData.message,
-                      content: null,
-                      title: "Twitter Content"
-                    };
-                  } else {
-                    // Format tweet data as a web scrape result
-                    const tweet = tweetData.tweet;
-                    const content = `Tweet by ${tweet.author} (@${tweet.username.replace('@', '')}):\n\n${tweet.text}\n\n` +
-                            `Posted: ${tweet.dateText}\n` +
-                            `Stats: ${tweet.stats.likes} likes, ${tweet.stats.retweets} retweets, ${tweet.stats.replies} replies\n` +
-                            (tweet.media.length > 0 ? `Media: ${tweet.media.length} items\n` : '') +
-                            (tweet.isReply ? `Reply to: ${tweet.replyTo}\n` : '') +
-                            (tweet.isQuote ? `Quote of: ${tweet.quotedFrom}\n` : '');
-                    
-                    return {
-                      url,
-                      content,
-                      title: `Tweet by ${tweet.author}`,
-                      tweet_data: tweet,
-                      source: tweetData.source,
-                      nitter_url: tweetData.url
-                    };
-                  }
+                  return formatTweetResult(tweetData, url);
                 } else {
                   // Regular URL scraping
                   const scrapeData = await scrapeUrl(url);
@@ -1092,5 +1060,7 @@ async function executeToolCalls(toolCalls) {
 
 module.exports = {
   TOOL_SCHEMAS,
-  executeToolCalls
+  executeToolCalls,
+  getNoteFilePath,
+  loadNotes
 }; 

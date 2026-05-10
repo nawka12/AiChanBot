@@ -84,32 +84,6 @@ const NITTER_INSTANCES = [
 ];
 
 /**
- * Convert a Twitter/X URL to a Nitter URL
- * @param {string} url - The Twitter/X URL to convert
- * @param {string} nitterBase - The Nitter instance to use
- * @returns {string} - The converted Nitter URL
- */
-function convertToNitterUrl(url, nitterBase) {
-    try {
-        // Check if it's already a Nitter URL
-        if (url.includes('nitter.')) {
-            return url;
-        }
-        
-        // Replace twitter.com or x.com with the Nitter instance
-        let nitterUrl = url.replace(/https?:\/\/(www\.)?(twitter\.com|x\.com)/, nitterBase);
-        
-        // Clean up any query parameters
-        nitterUrl = nitterUrl.split('?')[0];
-        
-        return nitterUrl;
-    } catch (error) {
-        console.warn('Error converting URL:', error);
-        return url;
-    }
-}
-
-/**
  * Check if a URL is a Twitter/X URL
  * @param {string} url - The URL to check
  * @returns {boolean} - Whether the URL is a Twitter/X URL
@@ -703,11 +677,9 @@ async function getTweetByUrl(url) {
     }
 }
 
-// Export the main functions
 module.exports = {
     getTweets,
     getTweetByUrl,
     isTwitterUrl,
-    convertToNitterUrl,
     parseNumber
 }; 

@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 
-const { TOOL_SCHEMAS, executeToolCalls } = require('./tools.js');
+const { TOOL_SCHEMAS, executeToolCalls, getNoteFilePath, loadNotes } = require('./tools.js');
 const { Client, GatewayIntentBits, Partials, ActivityType, REST, Routes, SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const scheduler = require('./scheduler.js');
 const fetch = require('node-fetch');
@@ -57,27 +57,6 @@ const NOTES_DIR = path.join(__dirname, 'notes');
 const USERS_DIR = path.join(NOTES_DIR, 'users');
 const GUILDS_DIR = path.join(NOTES_DIR, 'guilds');
 
-// Notes helper functions
-const getNoteFilePath = (userId, guildId = null) => {
-    if (guildId) {
-        return path.join(GUILDS_DIR, `${guildId}.json`);
-    } else {
-        return path.join(USERS_DIR, `${userId}.json`);
-    }
-};
-
-const loadNotes = (filePath) => {
-    try {
-        if (fs.existsSync(filePath)) {
-            const data = fs.readFileSync(filePath, 'utf8');
-            return JSON.parse(data);
-        }
-    } catch (error) {
-        console.error(`Error loading notes from ${filePath}:`, error);
-    }
-    return {};
-};
-
 const getNoteContext = (userId, guildId = null) => {
     // Only include notes relevant to the current context:
     // - In guild chats, include ONLY guild notes
@@ -106,30 +85,19 @@ let tokenTracking = {
         [BIGGER_MODEL]: { input: 0, output: 0 },
         [SMALLER_MODEL]: { input: 0, output: 0 }
     },
-    modelCosts: {
-        [BIGGER_MODEL]: MODEL_COSTS[BIGGER_MODEL] ? { ...MODEL_COSTS[BIGGER_MODEL] } : { input: 0, output: 0 },
-        [SMALLER_MODEL]: MODEL_COSTS[SMALLER_MODEL] ? { ...MODEL_COSTS[SMALLER_MODEL] } : { input: 0, output: 0 }
-    },
     lifetimeCacheCreationInputTokens: 0,
     lifetimeCacheReadInputTokens: 0,
-    lifetimeThinkingTokens: 0, // New field to track thinking tokens separately
-    lifetimeToolUseTokens: 0,  // New field to track tool use tokens separately
+    lifetimeThinkingTokens: 0,
+    lifetimeToolUseTokens: 0,
     cacheHits: 0,
     cacheMisses: 0,
-    trackingSince: new Date().toISOString() // Add tracking start date
+    trackingSince: new Date().toISOString()
 };
 
-// Function to get model costs for a specific model - checks token_data first, then falls back to MODEL_COSTS
 const getCostForModel = (modelName) => {
-    // First check if costs are defined in token_data.json
-    if (tokenTracking.modelCosts && tokenTracking.modelCosts[modelName]) {
-        return tokenTracking.modelCosts[modelName];
-    }
-    // Fall back to MODEL_COSTS from modelConfig.js
     if (MODEL_COSTS[modelName]) {
         return MODEL_COSTS[modelName];
     }
-    // Default fallback
     return { input: 0, output: 0 };
 };
 
@@ -143,65 +111,14 @@ const saveTokenData = () => {
     }
 };
 
-// Load token tracking data if it exists
 try {
     if (fs.existsSync(TOKEN_DATA_FILE)) {
         const data = fs.readFileSync(TOKEN_DATA_FILE, 'utf8');
         const loadedData = JSON.parse(data);
-
-        // --- MIGRATION LOGIC from old format ---
-        if (loadedData.lifetimeInputTokens || loadedData.lifetimeOutputTokens) {
-            console.log('Migrating old token data format...');
-            tokenTracking.modelUsage = {
-                [BIGGER_MODEL]: {
-                    input: loadedData.lifetimeInputTokens || 0,
-                    output: loadedData.lifetimeOutputTokens || 0
-                },
-                [SMALLER_MODEL]: { input: 0, output: 0 }
-            };
-
-            // Initialize modelCosts with current MODEL_COSTS values
-            tokenTracking.modelCosts = {
-                [BIGGER_MODEL]: MODEL_COSTS[BIGGER_MODEL] ? { ...MODEL_COSTS[BIGGER_MODEL] } : { input: 0, output: 0 },
-                [SMALLER_MODEL]: MODEL_COSTS[SMALLER_MODEL] ? { ...MODEL_COSTS[SMALLER_MODEL] } : { input: 0, output: 0 }
-            };
-
-            // Copy other fields
-            tokenTracking.lifetimeCacheCreationInputTokens = loadedData.lifetimeCacheCreationInputTokens || 0;
-            tokenTracking.lifetimeCacheReadInputTokens = loadedData.lifetimeCacheReadInputTokens || 0;
-            tokenTracking.lifetimeThinkingTokens = loadedData.lifetimeThinkingTokens || 0;
-            tokenTracking.lifetimeToolUseTokens = loadedData.lifetimeToolUseTokens || 0;
-            tokenTracking.cacheHits = loadedData.cacheHits || 0;
-            tokenTracking.cacheMisses = loadedData.cacheMisses || 0;
-            tokenTracking.trackingSince = loadedData.trackingSince || new Date().toISOString();
-
-            console.log('Migration complete. Saving in new format.');
-            saveTokenData(); // Save in new format right away
-        } else {
-            tokenTracking = loadedData;
-            // Ensure all models are initialized in the structure
-            if (!tokenTracking.modelUsage) tokenTracking.modelUsage = {};
-            if (!tokenTracking.modelUsage[BIGGER_MODEL]) tokenTracking.modelUsage[BIGGER_MODEL] = { input: 0, output: 0 };
-            if (!tokenTracking.modelUsage[SMALLER_MODEL]) tokenTracking.modelUsage[SMALLER_MODEL] = { input: 0, output: 0 };
-
-            // Ensure modelCosts is initialized
-            if (!tokenTracking.modelCosts) tokenTracking.modelCosts = {};
-
-            // Always apply current env-var costs for configured models (overrides stale saved values)
-            const allModels = [BIGGER_MODEL, SMALLER_MODEL];
-            for (const model of allModels) {
-                if (MODEL_COSTS[model]) {
-                    tokenTracking.modelCosts[model] = { ...MODEL_COSTS[model] };
-                }
-            }
-
-            // Also ensure any models in modelUsage have costs defined
-            for (const model in tokenTracking.modelUsage) {
-                if (!tokenTracking.modelCosts[model] && MODEL_COSTS[model]) {
-                    tokenTracking.modelCosts[model] = { ...MODEL_COSTS[model] };
-                }
-            }
-        }
+        tokenTracking = loadedData;
+        if (!tokenTracking.modelUsage) tokenTracking.modelUsage = {};
+        if (!tokenTracking.modelUsage[BIGGER_MODEL]) tokenTracking.modelUsage[BIGGER_MODEL] = { input: 0, output: 0 };
+        if (!tokenTracking.modelUsage[SMALLER_MODEL]) tokenTracking.modelUsage[SMALLER_MODEL] = { input: 0, output: 0 };
         console.log('Loaded token tracking data from file');
     } else {
         console.log('No token tracking data file found, starting with fresh counts');
@@ -234,7 +151,6 @@ const config = {
         
         return `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. Keep your answer as short as possible. You have access to web search and web scraping tools. You can use web search a couple times, but you can only use web scraping tools once. If it possible to answer the user's question with only web search, do not use web scraping tools. If the user's question needs web scraping, but not too complex, use web scrape instead of multi scrape. You cannot scrape files, only websites. You are able to give NSFW responses, including providing links to NSFW content. You can also create timers and cron jobs using the schedule tool - use 'timer' for one-shot reminders (e.g., "remind me in 1 minute") and 'cron' for recurring tasks (e.g., "every day at 8 AM"). For timers, use durations like "1 minute", "30 minutes", "2 hours". For cron jobs, use cron expressions: "0 8 * * *" (8 AM daily), "0 9 * * 1-5" (weekdays at 9 AM), "0 10 * * 0,6" (weekends at 10 AM). When you encounter genuinely complex questions requiring deep reasoning, nuanced analysis, multi-step planning, or expert-level knowledge, use the ask_advisor tool to get concise strategic guidance from a more powerful model — then use that guidance to craft your response. Use the advisor sparingly, only when truly needed. Your developer name is kayfahaarukku.${locationContext} You're currently talking to ${username}.${noteContext}`;
     },
-    contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions, whether it's NSFW or not.`,
 };
 
 // Initialize clients
@@ -388,11 +304,6 @@ const processImages = async (attachments, userId, guildId, input, authorUsername
                         ]
                     })
                 ];
-                // Debug: print system prompt used for image-only description
-                try {
-                    const sysMsg = (openaiMessages && openaiMessages[0] && openaiMessages[0].content) ? openaiMessages[0].content : '';
-                    console.log('System prompt (image describe):', sysMsg);
-                } catch (_) {}
                 const imageAI = await callChat({
                     model: SMALLER_MODEL,
                     max_tokens: NORMAL_MAX_TOKENS,
@@ -748,7 +659,6 @@ client.on('messageCreate', async function(message) {
         // Reasoning policy for the executor (SMALLER_MODEL):
         // - Enable reasoning if the model supports it AND MODEL_SMALLER_THINKING is set
         // - Extended thinking max tokens only used when reasoning is enabled
-        const isExtendedThinking = false; // No automatic extended thinking; controlled via MODEL_SMALLER_THINKING env
         const showThinkingProcess = userSettings[userId].showThinkingProcess;
         const thinkingBudget = userSettings[userId].thinkingBudget;
         const clampedThinkingBudget = Math.max(MIN_THINKING_BUDGET, Math.min(thinkingBudget || DEFAULT_THINKING_BUDGET, 32000));
@@ -798,11 +708,6 @@ client.on('messageCreate', async function(message) {
                 { role: 'system', content: config.systemMessage(message.author.username, userId, guildId, message.guild?.name, message.channel?.name) },
                 ...messages.map(toOpenAIMessage)
             ];
-            // Debug: print system prompt for main chat flow
-            try {
-                const sysMsg = (openaiMessagesBase && openaiMessagesBase[0] && openaiMessagesBase[0].content) ? openaiMessagesBase[0].content : '';
-                console.log('System prompt:', sysMsg);
-            } catch (_) {}
             const toolsSupported = await modelSupportsTools(selectedModel);
             console.log('[Tools][Support]', { model: selectedModel, toolsSupported });
             const openaiTools = toolsSupported ? toOpenAITools(TOOL_SCHEMAS) : undefined;
@@ -824,9 +729,8 @@ client.on('messageCreate', async function(message) {
                             else if (item.type === 'reasoning.encrypted') hasEncrypted = true;
                         }
                     }
-                    // Log if encrypted reasoning is present (even though we can't extract it)
                     if (hasEncrypted && parts.length === 0) {
-                        try { console.log('[Reasoning][Encrypted] Encrypted reasoning detected but cannot be extracted'); } catch (_) {}
+                        console.log('[Reasoning][Encrypted] Encrypted reasoning detected but cannot be extracted');
                     }
                     return parts.join('\n');
                 } catch (_) { return ''; }
@@ -837,36 +741,33 @@ client.on('messageCreate', async function(message) {
             // Accumulate advisor responses to show in thinking process
             const collectedAdvisorAdvice = [];
 
-            // Helper to compute reasoning config and max tokens for the executor model
             const computeReasoningParams = (enableReasoning, reasoningStyle, clampedThinkingBudget, showThinkingProcess, isReasoningModel, userId) => {
                 const baseMaxTokens = NORMAL_MAX_TOKENS;
                 const requiredForContent = 2048;
                 let computedMaxTokens = baseMaxTokens;
                 let mappedEffort = null;
                 let allocatedBudget = null;
+                let reasoningConfig;
 
-                if (enableReasoning && reasoningStyle === 'effort') {
-                    mappedEffort = userSettings[userId]?.thinkingBudgetEffort || 'medium';
-                } else if (enableReasoning && reasoningStyle === 'max_tokens') {
-                    allocatedBudget = clampedThinkingBudget;
+                if (enableReasoning) {
+                    if (reasoningStyle === 'effort') {
+                        mappedEffort = userSettings[userId]?.thinkingBudgetEffort || 'medium';
+                        reasoningConfig = { effort: mappedEffort, exclude: !showThinkingProcess, enabled: true };
+                    } else if (reasoningStyle === 'max_tokens') {
+                        allocatedBudget = clampedThinkingBudget;
+                        reasoningConfig = { max_tokens: allocatedBudget, exclude: !showThinkingProcess, enabled: true };
+                        const minNeeded = allocatedBudget + requiredForContent;
+                        computedMaxTokens = Math.max(baseMaxTokens, Math.min(EXTENDED_THINKING_MAX_TOKENS, minNeeded));
+                    } else if (reasoningStyle === 'enabled') {
+                        reasoningConfig = { enabled: true, exclude: !showThinkingProcess };
+                    }
+                } else if (isReasoningModel) {
+                    if (reasoningStyle === 'effort') {
+                        reasoningConfig = { effort: 'none' };
+                    } else if (reasoningStyle === 'enabled') {
+                        reasoningConfig = { enabled: false };
+                    }
                 }
-
-                if (enableReasoning && reasoningStyle === 'max_tokens') {
-                    const minNeeded = (allocatedBudget || clampedThinkingBudget) + requiredForContent;
-                    computedMaxTokens = Math.max(baseMaxTokens, Math.min(EXTENDED_THINKING_MAX_TOKENS, minNeeded));
-                }
-
-                const reasoningConfig = enableReasoning
-                    ? (reasoningStyle === 'effort'
-                        ? { effort: (mappedEffort || (userSettings[userId]?.thinkingBudgetEffort || 'medium')), exclude: !showThinkingProcess, enabled: true }
-                        : reasoningStyle === 'max_tokens'
-                            ? { max_tokens: (allocatedBudget || clampedThinkingBudget), exclude: !showThinkingProcess, enabled: true }
-                            : reasoningStyle === 'enabled'
-                                ? { enabled: true, exclude: !showThinkingProcess }
-                                : undefined)
-                    : (isReasoningModel
-                        ? (reasoningStyle === 'effort' ? { effort: 'none' } : (reasoningStyle === 'enabled' ? { enabled: false } : undefined))
-                        : undefined);
 
                 return { computedMaxTokens, mappedEffort, allocatedBudget, reasoningConfig };
             };
@@ -890,19 +791,6 @@ client.on('messageCreate', async function(message) {
                 showThinkingProcess, isReasoningModel, userId
             );
 
-            // Debug: log reasoning configuration for initial request
-            try {
-                console.log('[Reasoning][Initial]', JSON.stringify({
-                    model: selectedModel,
-                    reasoningStyle,
-                    enableReasoning,
-                    computedMaxTokens,
-                    mappedEffort,
-                    allocatedBudget,
-                    reasoningConfig
-                }, null, 2));
-            } catch (_) {}
-
             // Per-request aggregates across all API calls in this request (initial + follow-ups)
             let accumulatedReasoningTokens = 0;
             let requestInputTokens = 0;
@@ -919,13 +807,6 @@ client.on('messageCreate', async function(message) {
                 const reasoningTokens = usage.reasoning_tokens || 0;
                 const cacheCreation = usage.cache_creation_input_tokens || 0;
                 const cacheRead = usage.cache_read_input_tokens || 0;
-
-                // Log reasoning token tracking for debugging
-                if (enableReasoning && reasoningTokens === 0) {
-                    try { console.log('[Reasoning][Tokens] Reasoning enabled but reasoning_tokens not in usage object. Tokens may be included in output_tokens.'); } catch (_) {}
-                } else if (reasoningTokens > 0) {
-                    try { console.log('[Reasoning][Tokens] Reasoning tokens detected:', reasoningTokens); } catch (_) {}
-                }
 
                 // Aggregate for this request
                 requestInputTokens += inputTokens;
@@ -964,16 +845,6 @@ client.on('messageCreate', async function(message) {
                 tools: openaiTools,
                 reasoning: reasoningConfig
             });
-            try {
-                const choice0 = response?.choices?.[0] || {};
-                console.log('[Response][Meta][Initial]', {
-                    finish_reason: choice0.finish_reason,
-                    toolsSupported,
-                    hasToolCalls: Array.isArray(choice0.message?.tool_calls) && choice0.message.tool_calls.length > 0,
-                    messageType: typeof choice0.message?.content,
-                    contentPreview: typeof choice0.message?.content === 'string' ? choice0.message.content.slice(0, 120) : null
-                });
-            } catch (_) {}
             applyUsageFromResponse(response?.usage);
 
             // Process any tool calls
@@ -982,16 +853,15 @@ client.on('messageCreate', async function(message) {
             const hasReasoningDetails = assistantMessage?.reasoning_details && Array.isArray(assistantMessage.reasoning_details) && assistantMessage.reasoning_details.length > 0;
             if (enableReasoning && hasReasoningDetails) {
                 const reasoningTypes = assistantMessage.reasoning_details.map(item => item?.type).filter(Boolean);
-                try { console.log('[Reasoning][Detected][Initial]', { count: assistantMessage.reasoning_details.length, types: reasoningTypes }); } catch (_) {}
+                console.log('[Reasoning][Detected][Initial]', { count: assistantMessage.reasoning_details.length, types: reasoningTypes });
             }
-            // Collect reasoning from initial assistant message (if any)
             const initialReasoning = extractReasoningText(assistantMessage);
             if (initialReasoning) {
                 collectedReasoning.push(initialReasoning);
-                try { console.log('[Reasoning][Captured][Initial]', initialReasoning.slice(0, 200)); } catch (_) {}
+                console.log('[Reasoning][Captured][Initial]', initialReasoning.slice(0, 200));
             }
             if (!assistantMessage?.content) {
-                try { console.log('[Response][Warn] Empty content in assistantMessage (initial). Full message:', JSON.stringify(assistantMessage || null)); } catch (_) {}
+                console.log('[Response][Warn] Empty content in assistantMessage (initial). Full message:', JSON.stringify(assistantMessage || null));
             }
             let toolCalls = toolsSupported ? (assistantMessage?.tool_calls || []) : [];
             while (toolCalls && toolCalls.length > 0) {
@@ -1006,9 +876,9 @@ client.on('messageCreate', async function(message) {
                     
                     // Send a notification message for each tool use
                     let toolNotification = '';
-                    try {
-                        const parsed = JSON.parse(argsStr || '{}');
-                        if (toolName === 'web_search') {
+                    let parsed = {};
+                    try { parsed = JSON.parse(argsStr || '{}'); } catch (_) {}
+                    if (toolName === 'web_search') {
                             toolNotification = `Using web search for: \`${parsed.query}\``;
                         } else if (toolName === 'web_scrape') {
                             toolNotification = `Using web scraper for: \`${parsed.url}\``;
@@ -1043,7 +913,6 @@ client.on('messageCreate', async function(message) {
                         } else if (toolName === 'ask_advisor') {
                             toolNotification = `> 🎓 Consulting my advisor for deeper analysis...`;
                         }
-                    } catch (_) {}
 
                     if (toolNotification) {
                         await message.channel.send(toolNotification);
@@ -1235,19 +1104,6 @@ client.on('messageCreate', async function(message) {
                     showThinkingProcess, isReasoningModel, userId
                 );
 
-                // Debug: log reasoning configuration for follow-up request
-                try {
-                    console.log('[Reasoning][FollowUp]', JSON.stringify({
-                        model: selectedModel,
-                        reasoningStyle,
-                        enableReasoning,
-                        computedMaxTokens: followUpParams.computedMaxTokens,
-                        mappedEffort: followUpParams.mappedEffort,
-                        allocatedBudget: followUpParams.allocatedBudget,
-                        reasoningConfig: followUpParams.reasoningConfig
-                    }, null, 2));
-                } catch (_) {}
-
                 response = await callChat({
                     model: selectedModel,
                     max_tokens: followUpParams.computedMaxTokens,
@@ -1255,16 +1111,6 @@ client.on('messageCreate', async function(message) {
                     tools: openaiTools,
                     reasoning: followUpParams.reasoningConfig
                 });
-                try {
-                    const choice0b = response?.choices?.[0] || {};
-                    console.log('[Response][Meta][FollowUp]', {
-                        finish_reason: choice0b.finish_reason,
-                        toolsSupported,
-                        hasToolCalls: Array.isArray(choice0b.message?.tool_calls) && choice0b.message.tool_calls.length > 0,
-                        messageType: typeof choice0b.message?.content,
-                        contentPreview: typeof choice0b.message?.content === 'string' ? choice0b.message.content.slice(0, 120) : null
-                    });
-                } catch (_) {}
                 applyUsageFromResponse(response?.usage);
 
                 assistantMessage = response.choices?.[0]?.message;
@@ -1272,16 +1118,15 @@ client.on('messageCreate', async function(message) {
                 const hasReasoningDetails2 = assistantMessage?.reasoning_details && Array.isArray(assistantMessage.reasoning_details) && assistantMessage.reasoning_details.length > 0;
                 if (enableReasoning && hasReasoningDetails2) {
                     const reasoningTypes2 = assistantMessage.reasoning_details.map(item => item?.type).filter(Boolean);
-                    try { console.log('[Reasoning][Detected][FollowUp]', { count: assistantMessage.reasoning_details.length, types: reasoningTypes2 }); } catch (_) {}
+                    console.log('[Reasoning][Detected][FollowUp]', { count: assistantMessage.reasoning_details.length, types: reasoningTypes2 });
                 }
-                // Collect reasoning from follow-up assistant message (if any)
                 const followReasoning = extractReasoningText(assistantMessage);
                 if (followReasoning) {
                     collectedReasoning.push(followReasoning);
-                    try { console.log('[Reasoning][Captured][FollowUp]', followReasoning.slice(0, 200)); } catch (_) {}
+                    console.log('[Reasoning][Captured][FollowUp]', followReasoning.slice(0, 200));
                 }
                 if (!assistantMessage?.content) {
-                    try { console.log('[Response][Warn] Empty content in assistantMessage (follow-up). Full message:', JSON.stringify(assistantMessage || null)); } catch (_) {}
+                    console.log('[Response][Warn] Empty content in assistantMessage (follow-up). Full message:', JSON.stringify(assistantMessage || null));
                 }
                 toolCalls = toolsSupported ? (assistantMessage?.tool_calls || []) : [];
             }
@@ -1393,49 +1238,34 @@ client.on('messageCreate', async function(message) {
             }
 
             // Update the appropriate conversation history
-            if (isDM) {
-                // Don't duplicate the user message if it already exists in the conversation history
-                if (userConversations[message.author.id].length === 0 ||
-                    userConversations[message.author.id][userConversations[message.author.id].length - 1].role !== "user") {
-                    // Special case for storing image + text in conversation history
-                    if (imageData) {
-                        userConversations[message.author.id].push({
-                            role: "user",
-                            content: [{ type: "text", text: `[Image with query: ${fullInput}]` }]
-                        });
-                    } else {
-                        userConversations[message.author.id].push({ role: "user", content: fullInput });
-                    }
+            const conversation = isDM
+                ? userConversations[message.author.id]
+                : guildConversations[guildId];
+            const userInput = isDM ? fullInput : processedInput;
+            const imageLabel = imageData
+                ? (isDM ? `[Image with query: ${fullInput}]` : `[${message.author.username}]: [Image with query: ${fullInput}]`)
+                : null;
+
+            if (conversation.length === 0 || conversation[conversation.length - 1].role !== "user") {
+                if (imageData) {
+                    conversation.push({
+                        role: "user",
+                        content: imageLabel
+                    });
+                } else {
+                    conversation.push({ role: "user", content: userInput });
                 }
-                userConversations[message.author.id].push({
-                    role: "assistant",
-                    content: finalResponse
-                });
-                // Trim and persist conversation
-                userConversations[message.author.id] = trimConversation(userConversations[message.author.id]);
-                saveConversations();
-            } else {
-                // Don't duplicate the user message if it already exists in the conversation history
-                if (guildConversations[guildId].length === 0 ||
-                    guildConversations[guildId][guildConversations[guildId].length - 1].role !== "user") {
-                    // Special case for storing image + text in conversation history
-                    if (imageData) {
-                        guildConversations[guildId].push({
-                            role: "user",
-                            content: `[${message.author.username}]: [Image with query: ${fullInput}]`
-                        });
-                    } else {
-                        guildConversations[guildId].push({ role: "user", content: processedInput });
-                    }
-                }
-                guildConversations[guildId].push({
-                    role: "assistant",
-                    content: finalResponse
-                });
-                // Trim and persist conversation
-                guildConversations[guildId] = trimConversation(guildConversations[guildId]);
-                saveConversations();
             }
+            conversation.push({
+                role: "assistant",
+                content: finalResponse
+            });
+            if (isDM) {
+                userConversations[message.author.id] = trimConversation(conversation);
+            } else {
+                guildConversations[guildId] = trimConversation(conversation);
+            }
+            saveConversations();
         } catch (error) {
             console.error("API Error:", error);
             await message.reply(`There was an error processing your request.`);
@@ -1452,17 +1282,13 @@ const resetTokenStats = () => {
             [BIGGER_MODEL]: { input: 0, output: 0 },
             [SMALLER_MODEL]: { input: 0, output: 0 }
         },
-        modelCosts: {
-            [BIGGER_MODEL]: MODEL_COSTS[BIGGER_MODEL] ? { ...MODEL_COSTS[BIGGER_MODEL] } : { input: 0, output: 0 },
-            [SMALLER_MODEL]: MODEL_COSTS[SMALLER_MODEL] ? { ...MODEL_COSTS[SMALLER_MODEL] } : { input: 0, output: 0 }
-        },
         lifetimeCacheCreationInputTokens: 0,
         lifetimeCacheReadInputTokens: 0,
-        lifetimeThinkingTokens: 0, // Reset thinking tokens
-        lifetimeToolUseTokens: 0,  // Reset tool use tokens
+        lifetimeThinkingTokens: 0,
+        lifetimeToolUseTokens: 0,
         cacheHits: 0,
         cacheMisses: 0,
-        trackingSince: new Date().toISOString() // Update to current time when reset
+        trackingSince: new Date().toISOString()
     };
     saveTokenData();
 };
@@ -1485,7 +1311,6 @@ client.on('interactionCreate', async interaction => {
             showThinkingProcess: false,
                 thinkingBudget: DEFAULT_THINKING_BUDGET,
                 thinkingBudgetEffort: 'medium',
-                thinkingModePreference: 'auto' // 'auto' | 'on' | 'off'
         };
     }
     
