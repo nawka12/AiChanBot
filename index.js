@@ -9,12 +9,11 @@ const fs = require('fs');
 const path = require('path');
 
 // Model and OpenRouter helpers (modularized)
-const { getModels, getModelCosts, selectModelByComplexity } = require('./modelConfig.js');
+const { getModels, getModelCosts } = require('./modelConfig.js');
 const { toOpenAIMessage, toOpenAITools, callChat, modelSupportsTools, modelSupportsReasoning, getReasoningStyle } = require('./openrouter.js');
 
 // Models
-const { BIGGER_MODEL, SMALLER_MODEL, COMPLEXITY_MODEL, MODEL_SMALLER_THINKING, MODEL_BIGGER_THINKING } = getModels();
-const COMPLEXITY_CHECK_MODEL = COMPLEXITY_MODEL; // Independent configurable model for complexity check
+const { BIGGER_MODEL, SMALLER_MODEL, MODEL_SMALLER_THINKING } = getModels();
 const MODEL_COSTS = getModelCosts();
 
 // Bot creator identification (using Discord user ID instead of username for security)
@@ -105,13 +104,11 @@ const getNoteContext = (userId, guildId = null) => {
 let tokenTracking = {
     modelUsage: {
         [BIGGER_MODEL]: { input: 0, output: 0 },
-        [SMALLER_MODEL]: { input: 0, output: 0 },
-        [COMPLEXITY_CHECK_MODEL]: { input: 0, output: 0 }
+        [SMALLER_MODEL]: { input: 0, output: 0 }
     },
     modelCosts: {
         [BIGGER_MODEL]: MODEL_COSTS[BIGGER_MODEL] ? { ...MODEL_COSTS[BIGGER_MODEL] } : { input: 0, output: 0 },
-        [SMALLER_MODEL]: MODEL_COSTS[SMALLER_MODEL] ? { ...MODEL_COSTS[SMALLER_MODEL] } : { input: 0, output: 0 },
-        [COMPLEXITY_CHECK_MODEL]: MODEL_COSTS[COMPLEXITY_CHECK_MODEL] ? { ...MODEL_COSTS[COMPLEXITY_CHECK_MODEL] } : { input: 0, output: 0 }
+        [SMALLER_MODEL]: MODEL_COSTS[SMALLER_MODEL] ? { ...MODEL_COSTS[SMALLER_MODEL] } : { input: 0, output: 0 }
     },
     lifetimeCacheCreationInputTokens: 0,
     lifetimeCacheReadInputTokens: 0,
@@ -160,15 +157,13 @@ try {
                     input: loadedData.lifetimeInputTokens || 0,
                     output: loadedData.lifetimeOutputTokens || 0
                 },
-                [SMALLER_MODEL]: { input: 0, output: 0 },
-                [COMPLEXITY_CHECK_MODEL]: { input: 0, output: 0 }
+                [SMALLER_MODEL]: { input: 0, output: 0 }
             };
 
             // Initialize modelCosts with current MODEL_COSTS values
             tokenTracking.modelCosts = {
                 [BIGGER_MODEL]: MODEL_COSTS[BIGGER_MODEL] ? { ...MODEL_COSTS[BIGGER_MODEL] } : { input: 0, output: 0 },
-                [SMALLER_MODEL]: MODEL_COSTS[SMALLER_MODEL] ? { ...MODEL_COSTS[SMALLER_MODEL] } : { input: 0, output: 0 },
-                [COMPLEXITY_CHECK_MODEL]: MODEL_COSTS[COMPLEXITY_CHECK_MODEL] ? { ...MODEL_COSTS[COMPLEXITY_CHECK_MODEL] } : { input: 0, output: 0 }
+                [SMALLER_MODEL]: MODEL_COSTS[SMALLER_MODEL] ? { ...MODEL_COSTS[SMALLER_MODEL] } : { input: 0, output: 0 }
             };
 
             // Copy other fields
@@ -188,13 +183,12 @@ try {
             if (!tokenTracking.modelUsage) tokenTracking.modelUsage = {};
             if (!tokenTracking.modelUsage[BIGGER_MODEL]) tokenTracking.modelUsage[BIGGER_MODEL] = { input: 0, output: 0 };
             if (!tokenTracking.modelUsage[SMALLER_MODEL]) tokenTracking.modelUsage[SMALLER_MODEL] = { input: 0, output: 0 };
-            if (!tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL]) tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL] = { input: 0, output: 0 };
 
             // Ensure modelCosts is initialized
             if (!tokenTracking.modelCosts) tokenTracking.modelCosts = {};
 
             // Ensure all models have costs defined - use MODEL_COSTS as fallback
-            const allModels = [BIGGER_MODEL, SMALLER_MODEL, COMPLEXITY_CHECK_MODEL];
+            const allModels = [BIGGER_MODEL, SMALLER_MODEL];
             for (const model of allModels) {
                 if (!tokenTracking.modelCosts[model] && MODEL_COSTS[model]) {
                     tokenTracking.modelCosts[model] = { ...MODEL_COSTS[model] };
@@ -238,7 +232,7 @@ const config = {
             locationContext = ' You are currently in a private direct message conversation.';
         }
         
-        return `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. Keep your answer as short as possible. You have access to web search and web scraping tools. You can use web search a couple times, but you can only use web scraping tools once. If it possible to answer the user's question with only web search, do not use web scraping tools. If the user's question needs web scraping, but not too complex, use web scrape instead of multi scrape. You cannot scrape files, only websites. You are able to give NSFW responses, including providing links to NSFW content. You can also create timers and cron jobs using the schedule tool - use 'timer' for one-shot reminders (e.g., "remind me in 1 minute") and 'cron' for recurring tasks (e.g., "every day at 8 AM"). For timers, use durations like "1 minute", "30 minutes", "2 hours". For cron jobs, use cron expressions: "0 8 * * *" (8 AM daily), "0 9 * * 1-5" (weekdays at 9 AM), "0 10 * * 0,6" (weekends at 10 AM). Your developer name is kayfahaarukku.${locationContext} You're currently talking to ${username}.${noteContext}`;
+        return `You are Ai-chan, a helpful assistant in a form of Discord bot. Your name is taken from Kizuna Ai, a virtual YouTuber. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)} and the current time is ${new Date().toLocaleTimeString('en-US', TIME_OPTIONS)} (GMT+7). If user is asking about time, always answer with the current time. Keep your answer as short as possible. You have access to web search and web scraping tools. You can use web search a couple times, but you can only use web scraping tools once. If it possible to answer the user's question with only web search, do not use web scraping tools. If the user's question needs web scraping, but not too complex, use web scrape instead of multi scrape. You cannot scrape files, only websites. You are able to give NSFW responses, including providing links to NSFW content. You can also create timers and cron jobs using the schedule tool - use 'timer' for one-shot reminders (e.g., "remind me in 1 minute") and 'cron' for recurring tasks (e.g., "every day at 8 AM"). For timers, use durations like "1 minute", "30 minutes", "2 hours". For cron jobs, use cron expressions: "0 8 * * *" (8 AM daily), "0 9 * * 1-5" (weekdays at 9 AM), "0 10 * * 0,6" (weekends at 10 AM). When you encounter genuinely complex questions requiring deep reasoning, nuanced analysis, multi-step planning, or expert-level knowledge, use the ask_advisor tool to get concise strategic guidance from a more powerful model — then use that guidance to craft your response. Use the advisor sparingly, only when truly needed. Your developer name is kayfahaarukku.${locationContext} You're currently talking to ${username}.${noteContext}`;
     },
     contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions, whether it's NSFW or not.`,
 };
@@ -261,51 +255,6 @@ const client = new Client({
 });
 
 // OpenRouter functions are now imported from openrouter.js
-
-const MIN_COMPLEXITY_OUTPUT_TOKENS = 1000; // Some providers require >=16; use a safe margin
-const getPromptComplexity = async (prompt) => {
-    try {
-        const messages = [
-            { role: 'system', content: `You are a prompt complexity analyzer. Your task is to classify the user's prompt into one of three categories: 'simple', 'complex', or 'very_complex'.\n- 'simple': A straightforward question, a simple request, a greeting, or a short phrase that can be answered without deep reasoning or multiple steps. Examples: "hello", "what's the weather?", "tell me a joke".\n- 'complex': A prompt that requires some reasoning, data retrieval (like web search), or a multi-part answer. It's not a simple lookup. Examples: "summarize this article", "what are the main differences between Python and JavaScript?", "write a short story about a robot".\n- 'very_complex': A prompt that requires deep, step-by-step reasoning, planning, code generation, or analysis of a complex topic. This often involves a chain of thought. Examples: "develop a business plan for a new tech startup", "write a detailed technical report on quantum computing", "act as a travel agent and plan a 2-week itinerary for Japan".\nRespond with ONLY one of the three category names and nothing else.` },
-            { role: 'user', content: prompt }
-        ];
-        const response = await callChat({
-            model: COMPLEXITY_CHECK_MODEL,
-            messages,
-            max_tokens: MIN_COMPLEXITY_OUTPUT_TOKENS
-        });
-        const text = response.choices?.[0]?.message?.content || '';
-        const complexity = text.trim().toLowerCase();
-        
-            if (response.usage) {
-                const inputTokens = response.usage.prompt_tokens || 0;
-                const outputTokens = response.usage.completion_tokens || 0;
-                if (!tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL]) {
-                    tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL] = { input: 0, output: 0 };
-                }
-                // Ensure costs are saved for complexity check model
-                if (!tokenTracking.modelCosts[COMPLEXITY_CHECK_MODEL]) {
-                    const fallbackCosts = MODEL_COSTS[COMPLEXITY_CHECK_MODEL] || { input: 0, output: 0 };
-                    tokenTracking.modelCosts[COMPLEXITY_CHECK_MODEL] = { ...fallbackCosts };
-                }
-                tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL].input += inputTokens;
-                tokenTracking.modelUsage[COMPLEXITY_CHECK_MODEL].output += outputTokens;
-                console.log(`Complexity check (${COMPLEXITY_CHECK_MODEL}) usage: ${inputTokens} input, ${outputTokens} output tokens.`);
-                saveTokenData();
-            }
-
-        const normalizedComplexity = complexity.toLowerCase().trim();
-        if (['simple', 'complex', 'very_complex'].includes(normalizedComplexity)) {
-            console.log(`Prompt complexity assessed as: ${normalizedComplexity}`);
-            return normalizedComplexity;
-        }
-        console.warn(`Unexpected complexity assessment: ${complexity}. Defaulting to 'simple'.`);
-        return 'simple';
-    } catch (error) {
-        console.error('Error assessing prompt complexity:', error);
-        return 'simple';
-    }
-};
 
 // State management
 let userConversations = {}; // For DM conversations
@@ -682,7 +631,7 @@ client.on('messageCreate', async function(message) {
         const isDM = message.channel.type === 1;
         const guildId = isDM ? null : message.guild.id;
 
-        // Handle reset command before complexity check
+        // Handle reset command
         if (input.toLowerCase() === 'reset') {
             if (isDM) {
                 if (userConversations[message.author.id]) {
@@ -709,22 +658,11 @@ client.on('messageCreate', async function(message) {
             };
         }
 
-        // New logic: Determine prompt complexity to select model
-        const complexity = await getPromptComplexity(fullInput);
-        console.log('[Complexity]', { inputPreview: fullInput.slice(0, 120), complexity });
-        
-        let selectedModel = selectModelByComplexity(complexity);
-        let forceExtendedThinking = false;
-        
-        switch (complexity) {
-            case 'complex':
-                await message.channel.send(`> 🔍 This seems a bit complex. Switching to my more powerful bigger model to give you the best possible answer.`);
-                break;
-            case 'very_complex':
-                forceExtendedThinking = true;
-                await message.channel.send(`> 🧠 This requires deep thought. Engaging my powerful bigger model and enabling thinking mode for a thorough analysis.`);
-                break;
-        }
+        // Advisor strategy: always use smaller model as executor.
+        // When the executor encounters a complex question, it can invoke the
+        // ask_advisor tool which calls the bigger model for concise guidance (~600 tokens).
+        // This is more cost-efficient than always routing complex queries to the bigger model.
+        const selectedModel = SMALLER_MODEL;
 
         // Modify the input to include username for guild messages
         const processedInput = isDM ? 
@@ -807,33 +745,22 @@ client.on('messageCreate', async function(message) {
             userConversations[message.author.id] : 
             guildConversations[guildId];
         
-        // Check if extended thinking is enabled for this user
-        // Thinking mode is only enabled automatically for very complex prompts
-        const isExtendedThinking = forceExtendedThinking;
+        // Reasoning policy for the executor (SMALLER_MODEL):
+        // - Enable reasoning if the model supports it AND MODEL_SMALLER_THINKING is set
+        // - Extended thinking max tokens only used when reasoning is enabled
+        const isExtendedThinking = false; // No automatic extended thinking; controlled via MODEL_SMALLER_THINKING env
         const showThinkingProcess = userSettings[userId].showThinkingProcess;
         const thinkingBudget = userSettings[userId].thinkingBudget;
-        // Reasoning policy:
-        // - Only enable reasoning if model supports it AND extended thinking is triggered (very_complex)
-        // - We do not force reasoning for "reasoning-only" styles anymore, allowing the API to default
-        // User requirement: "on non-reasoning model, simple and complex should not use reasoning, only very_complex uses reasoning"
         const clampedThinkingBudget = Math.max(MIN_THINKING_BUDGET, Math.min(thinkingBudget || DEFAULT_THINKING_BUDGET, 32000));
         const isOpenAIProvider = typeof selectedModel === 'string' && selectedModel.startsWith('openai/');
-        
+
         // Check reasoning support BEFORE building system message
         const isReasoningModel = await modelSupportsReasoning(selectedModel);
         const reasoningStyle = await getReasoningStyle(selectedModel);
         console.log('[Reasoning][ModelStyle]', { model: selectedModel, reasoningStyle, isReasoningModel });
-        
-        // Reasoning policy:
-        // - Enable reasoning if model supports it AND:
-        //   1. It is 'very_complex' (force extended thinking) OR
-        //   2. It is 'simple' and MODEL_SMALLER_THINKING is enabled OR
-        //   3. It is 'complex' and MODEL_BIGGER_THINKING is enabled
-        let enableReasoning = isReasoningModel && (
-            isExtendedThinking || 
-            (complexity === 'simple' && MODEL_SMALLER_THINKING) || 
-            (complexity === 'complex' && MODEL_BIGGER_THINKING)
-        );
+
+        // Enable reasoning on the executor only when MODEL_SMALLER_THINKING is configured
+        let enableReasoning = isReasoningModel && MODEL_SMALLER_THINKING;
         
         // Create messages array with conversation history
         let messages = [...conversationHistory];
@@ -908,19 +835,18 @@ client.on('messageCreate', async function(message) {
             // Accumulate reasoning across responses (initial and follow-ups)
             const collectedReasoning = [];
 
-            // Helper to compute reasoning config and max tokens based on complexity
-            const computeReasoningParams = (complexity, enableReasoning, reasoningStyle, clampedThinkingBudget, isExtendedThinking, showThinkingProcess, isReasoningModel, userId) => {
-                const baseMaxTokens = isExtendedThinking ? EXTENDED_THINKING_MAX_TOKENS : NORMAL_MAX_TOKENS;
+            // Helper to compute reasoning config and max tokens for the executor model
+            const computeReasoningParams = (enableReasoning, reasoningStyle, clampedThinkingBudget, showThinkingProcess, isReasoningModel, userId) => {
+                const baseMaxTokens = NORMAL_MAX_TOKENS;
                 const requiredForContent = 2048;
                 let computedMaxTokens = baseMaxTokens;
                 let mappedEffort = null;
                 let allocatedBudget = null;
 
                 if (enableReasoning && reasoningStyle === 'effort') {
-                    mappedEffort = (complexity === 'very_complex') ? 'high' : (complexity === 'complex') ? 'medium' : 'low';
+                    mappedEffort = userSettings[userId]?.thinkingBudgetEffort || 'medium';
                 } else if (enableReasoning && reasoningStyle === 'max_tokens') {
-                    const baseBudget = clampedThinkingBudget;
-                    allocatedBudget = (complexity === 'very_complex') ? baseBudget : (complexity === 'complex') ? Math.floor(baseBudget / 2) : Math.max(MIN_THINKING_BUDGET, Math.floor(baseBudget / 3));
+                    allocatedBudget = clampedThinkingBudget;
                 }
 
                 if (enableReasoning && reasoningStyle === 'max_tokens') {
@@ -958,15 +884,14 @@ client.on('messageCreate', async function(message) {
 
             // Compute reasoning config using helper
             const { computedMaxTokens, mappedEffort, allocatedBudget, reasoningConfig } = computeReasoningParams(
-                complexity, enableReasoning, reasoningStyle, clampedThinkingBudget,
-                isExtendedThinking, showThinkingProcess, isReasoningModel, userId
+                enableReasoning, reasoningStyle, clampedThinkingBudget,
+                showThinkingProcess, isReasoningModel, userId
             );
 
             // Debug: log reasoning configuration for initial request
             try {
                 console.log('[Reasoning][Initial]', JSON.stringify({
                     model: selectedModel,
-                    complexity,
                     reasoningStyle,
                     enableReasoning,
                     computedMaxTokens,
@@ -1111,9 +1036,11 @@ client.on('messageCreate', async function(message) {
                             } else {
                                 toolNotification = `Using note tool (${scope})`;
                             }
+                        } else if (toolName === 'ask_advisor') {
+                            toolNotification = `> 🎓 Consulting my advisor for deeper analysis...`;
                         }
                     } catch (_) {}
-                    
+
                     if (toolNotification) {
                         await message.channel.send(toolNotification);
                     }
@@ -1123,60 +1050,134 @@ client.on('messageCreate', async function(message) {
                 console.log("\nExecuting tool calls...");
                 let toolResults = [];
                 let toolFailures = [];
-                
-                try {
-                    toolResults = await executeToolCalls(toolCalls.map(call => {
-                        let args = {};
-                        try {
-                            args = JSON.parse(call.function?.arguments || '{}');
-                        } catch (parseError) {
-                            console.error(`Failed to parse tool arguments for ${call.function?.name}:`, parseError.message, 'Raw:', call.function?.arguments);
-                        }
 
-                        // Add context for note tool
-                        if (call.function?.name === 'note') {
-                            args.userId = message.author.id;
-                            if (isDM) {
-                                args.guildId = null;
-                            } else {
-                                args.guildId = guildId;
+                // Separate advisor calls from regular tool calls
+                const advisorCalls = toolCalls.filter(c => c.function?.name === 'ask_advisor');
+                const regularCalls = toolCalls.filter(c => c.function?.name !== 'ask_advisor');
+
+                // Execute regular tools
+                if (regularCalls.length > 0) {
+                    try {
+                        const regularResults = await executeToolCalls(regularCalls.map(call => {
+                            let args = {};
+                            try {
+                                args = JSON.parse(call.function?.arguments || '{}');
+                            } catch (parseError) {
+                                console.error(`Failed to parse tool arguments for ${call.function?.name}:`, parseError.message, 'Raw:', call.function?.arguments);
+                            }
+
+                            // Add context for note tool
+                            if (call.function?.name === 'note') {
+                                args.userId = message.author.id;
+                                if (isDM) {
+                                    args.guildId = null;
+                                } else {
+                                    args.guildId = guildId;
+                                }
+                            }
+
+                            // Add context for schedule tool
+                            if (call.function?.name === 'schedule') {
+                                args.userId = message.author.id;
+                                args.channelId = message.channel.id;
+                                if (isDM) {
+                                    args.guildId = null;
+                                    args.hasManageGuild = false;
+                                } else {
+                                    args.guildId = guildId;
+                                    // Check for Manage Server permission
+                                    args.hasManageGuild = message.member?.permissions?.has(PermissionFlagsBits.ManageGuild) || false;
+                                }
+                            }
+
+                            return ({
+                                id: call.id,
+                                name: call.function?.name,
+                                input: args
+                            });
+                        }));
+                        toolResults.push(...regularResults);
+
+                        // Check for errors in regular tool results
+                        for (const result of regularResults) {
+                            const parsedOutput = JSON.parse(result.output);
+                            if (parsedOutput.error) {
+                                const toolCall = regularCalls.find(call => call.id === result.tool_call_id);
+                                const errorMsg = `Error with ${toolCall ? (toolCall.function?.name) : 'unknown tool'}`;
+                                toolFailures.push(errorMsg);
+                                console.error(errorMsg);
                             }
                         }
-
-                        // Add context for schedule tool
-                        if (call.function?.name === 'schedule') {
-                            args.userId = message.author.id;
-                            args.channelId = message.channel.id;
-                            if (isDM) {
-                                args.guildId = null;
-                                args.hasManageGuild = false;
-                            } else {
-                                args.guildId = guildId;
-                                // Check for Manage Server permission
-                                args.hasManageGuild = message.member?.permissions?.has(PermissionFlagsBits.ManageGuild) || false;
-                            }
-                        }
-
-                        return ({
-                            id: call.id,
-                            name: call.function?.name,
-                            input: args
-                        });
-                    }));
-                    
-                    // Check for errors in tool results
-                    for (const result of toolResults) {
-                        const parsedOutput = JSON.parse(result.output);
-                        if (parsedOutput.error) {
-                            const toolCall = toolCalls.find(call => call.id === result.tool_call_id);
-                            const errorMsg = `Error with ${toolCall ? (toolCall.function?.name) : 'unknown tool'}`;
-                            toolFailures.push(errorMsg);
-                            console.error(errorMsg);
-                        }
+                    } catch (error) {
+                        console.error("Failed to execute regular tool calls:", error);
+                        toolFailures.push(`Tool execution failed: ${error.message}`);
                     }
-                } catch (error) {
-                    console.error("Failed to execute tool calls:", error);
-                    toolFailures.push(`Tool execution failed: ${error.message}`);
+                }
+
+                // Execute advisor calls (calls the bigger model for concise strategic guidance)
+                for (const advisorCall of advisorCalls) {
+                    let advisorArgs = {};
+                    try {
+                        advisorArgs = JSON.parse(advisorCall.function?.arguments || '{}');
+                    } catch (_) {}
+
+                    const advisorQuestion = advisorArgs.question || '';
+                    const advisorContext = advisorArgs.context || '';
+
+                    console.log('[Advisor] Consulting bigger model for guidance on:', advisorQuestion.slice(0, 120));
+
+                    try {
+                        const advisorMessages = [
+                            {
+                                role: 'system',
+                                content: `You are a strategic advisor for Ai-chan, a Discord AI assistant. Your role is to analyze complex questions and provide concise, actionable guidance that Ai-chan can use to craft her response.\n\nProvide:\n1. Key insights or relevant facts about the topic\n2. A recommended approach for answering\n3. Any important caveats or nuances to keep in mind\n\nBe specific and strategic. Keep your response under 600 tokens. You are NOT directly responding to the user — you are advising Ai-chan on how to respond.`
+                            },
+                            {
+                                role: 'user',
+                                content: advisorContext
+                                    ? `Context: ${advisorContext}\n\nQuestion to analyze: ${advisorQuestion}`
+                                    : `Question to analyze: ${advisorQuestion}`
+                            }
+                        ];
+
+                        const advisorResponse = await callChat({
+                            model: BIGGER_MODEL,
+                            messages: advisorMessages,
+                            max_tokens: 700
+                        });
+
+                        // Track advisor token usage under BIGGER_MODEL
+                        if (advisorResponse.usage) {
+                            const advInput = advisorResponse.usage.prompt_tokens || 0;
+                            const advOutput = advisorResponse.usage.completion_tokens || 0;
+                            if (!tokenTracking.modelUsage[BIGGER_MODEL]) {
+                                tokenTracking.modelUsage[BIGGER_MODEL] = { input: 0, output: 0 };
+                            }
+                            if (!tokenTracking.modelCosts[BIGGER_MODEL]) {
+                                const fallbackCosts = MODEL_COSTS[BIGGER_MODEL] || { input: 0, output: 0 };
+                                tokenTracking.modelCosts[BIGGER_MODEL] = { ...fallbackCosts };
+                            }
+                            tokenTracking.modelUsage[BIGGER_MODEL].input += advInput;
+                            tokenTracking.modelUsage[BIGGER_MODEL].output += advOutput;
+                            console.log(`[Advisor] Usage (${BIGGER_MODEL}): ${advInput} input, ${advOutput} output tokens.`);
+                            saveTokenData();
+                        }
+
+                        const advisorAdvice = advisorResponse.choices?.[0]?.message?.content || 'No guidance provided.';
+                        console.log('[Advisor] Guidance received:', advisorAdvice.slice(0, 200));
+
+                        toolResults.push({
+                            tool_call_id: advisorCall.id,
+                            output: JSON.stringify({ advice: advisorAdvice })
+                        });
+                    } catch (advisorError) {
+                        console.error('[Advisor] Error calling advisor:', advisorError);
+                        toolResults.push({
+                            tool_call_id: advisorCall.id,
+                            output: JSON.stringify({ error: 'Advisor unavailable.', advice: 'Proceed with your best judgment.' })
+                        });
+                        toolFailures.push('Advisor call failed — proceeding without guidance.');
+                    }
                 }
                 
                 // Send error messages to the user if any tools failed
@@ -1223,15 +1224,14 @@ client.on('messageCreate', async function(message) {
                 // Get model's response with the tool results
                 // Recompute reasoning params for follow-up request
                 const followUpParams = computeReasoningParams(
-                    complexity, enableReasoning, reasoningStyle, clampedThinkingBudget,
-                    isExtendedThinking, showThinkingProcess, isReasoningModel, userId
+                    enableReasoning, reasoningStyle, clampedThinkingBudget,
+                    showThinkingProcess, isReasoningModel, userId
                 );
 
                 // Debug: log reasoning configuration for follow-up request
                 try {
                     console.log('[Reasoning][FollowUp]', JSON.stringify({
                         model: selectedModel,
-                        complexity,
                         reasoningStyle,
                         enableReasoning,
                         computedMaxTokens: followUpParams.computedMaxTokens,
@@ -1434,13 +1434,11 @@ const resetTokenStats = () => {
     tokenTracking = {
         modelUsage: {
             [BIGGER_MODEL]: { input: 0, output: 0 },
-            [SMALLER_MODEL]: { input: 0, output: 0 },
-            [COMPLEXITY_CHECK_MODEL]: { input: 0, output: 0 }
+            [SMALLER_MODEL]: { input: 0, output: 0 }
         },
         modelCosts: {
             [BIGGER_MODEL]: MODEL_COSTS[BIGGER_MODEL] ? { ...MODEL_COSTS[BIGGER_MODEL] } : { input: 0, output: 0 },
-            [SMALLER_MODEL]: MODEL_COSTS[SMALLER_MODEL] ? { ...MODEL_COSTS[SMALLER_MODEL] } : { input: 0, output: 0 },
-            [COMPLEXITY_CHECK_MODEL]: MODEL_COSTS[COMPLEXITY_CHECK_MODEL] ? { ...MODEL_COSTS[COMPLEXITY_CHECK_MODEL] } : { input: 0, output: 0 }
+            [SMALLER_MODEL]: MODEL_COSTS[SMALLER_MODEL] ? { ...MODEL_COSTS[SMALLER_MODEL] } : { input: 0, output: 0 }
         },
         lifetimeCacheCreationInputTokens: 0,
         lifetimeCacheReadInputTokens: 0,
@@ -1501,7 +1499,7 @@ client.on('interactionCreate', async interaction => {
                 }
                 userSettings[user.id].thinkingBudgetEffort = effort;
                 saveUserSettings();
-                replyText = `Set effort default to: ${effort}. Note: for reasoning-only OpenAI models, effort is auto-mapped by complexity: simple→low, complex→medium, very_complex→high.`;
+                replyText = `Set effort default to: ${effort}.`;
             } else if (!isOpenAI && typeof raw === 'number') {
                 if (raw < MIN_THINKING_BUDGET) {
                     await interaction.reply({ content: `Thinking budget must be at least ${MIN_THINKING_BUDGET} tokens.`, ephemeral: true });
@@ -1509,12 +1507,12 @@ client.on('interactionCreate', async interaction => {
                 }
                 userSettings[user.id].thinkingBudget = Math.min(raw, 32000);
                 saveUserSettings();
-                replyText = `Thinking budget set to ${userSettings[user.id].thinkingBudget} tokens. Note: for reasoning-only budget models, allocation is auto-mapped by complexity: simple→1/3, complex→1/2, very_complex→full.`;
+                replyText = `Thinking budget set to ${userSettings[user.id].thinkingBudget} tokens.`;
             } else {
                 // Fallback
-                replyText = isOpenAI 
-                    ? 'For OpenAI models, pass low|medium|high. Effort is auto-mapped by complexity when the model is reasoning-only.'
-                    : `For budget models, pass a number (>= ${MIN_THINKING_BUDGET}). Allocation auto-maps by complexity when the model is reasoning-only.`;
+                replyText = isOpenAI
+                    ? 'For OpenAI models, pass low|medium|high.'
+                    : `For budget models, pass a number (>= ${MIN_THINKING_BUDGET}).`;
             }
 
             await interaction.reply({ content: replyText, ephemeral: true });
