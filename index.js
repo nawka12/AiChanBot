@@ -877,7 +877,14 @@ client.on('messageCreate', async function(message) {
                 console.log('[Response][Warn] Empty content in assistantMessage (initial). Full message:', JSON.stringify(assistantMessage || null));
             }
             let toolCalls = toolsSupported ? (assistantMessage?.tool_calls || []) : [];
-            while (toolCalls && toolCalls.length > 0) {
+            // Cap tool-call round-trips to prevent an infinite loop if the model keeps
+            // requesting tools (e.g. repeatedly retrying a failing tool). Generous limit
+            // to allow legitimate multi-tool flows (multiple searches + scrape + up to 5
+            // advisor calls).
+            let toolIterations = 0;
+            const MAX_TOOL_ITERATIONS = 10;
+            while (toolCalls && toolCalls.length > 0 && toolIterations < MAX_TOOL_ITERATIONS) {
+                toolIterations++;
                 console.log("\nModel is requesting to use tools:");
                 
                 // Log the tool calls and send notifications
