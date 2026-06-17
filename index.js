@@ -356,17 +356,30 @@ const splitMessage = (content) => {
     const parts = [];
     let currentPart = '';
 
-    content.split('\n').forEach((line) => {
-        if ((currentPart + line).length > MAX_MESSAGE_LENGTH) {
+    const pushCurrent = () => {
+        if (currentPart.length > 0) {
             parts.push(currentPart);
             currentPart = '';
         }
-        currentPart += `${line}\n`;
+    };
+
+    content.split('\n').forEach((line) => {
+        // Hard-split a single line that can't fit in one message on its own
+        while (line.length > MAX_MESSAGE_LENGTH) {
+            pushCurrent();
+            parts.push(line.slice(0, MAX_MESSAGE_LENGTH));
+            line = line.slice(MAX_MESSAGE_LENGTH);
+        }
+        const separator = currentPart.length > 0 ? '\n' : '';
+        if (currentPart.length + separator.length + line.length > MAX_MESSAGE_LENGTH) {
+            pushCurrent();
+            currentPart = line;
+        } else {
+            currentPart += separator + line;
+        }
     });
 
-    if (currentPart.length > 0) {
-        parts.push(currentPart);
-    }
+    pushCurrent();
 
     return parts;
 };
