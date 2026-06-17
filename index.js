@@ -85,6 +85,7 @@ let tokenTracking = {
         [BIGGER_MODEL]: { input: 0, output: 0 },
         [SMALLER_MODEL]: { input: 0, output: 0 }
     },
+    modelCosts: {},
     lifetimeCacheCreationInputTokens: 0,
     lifetimeCacheReadInputTokens: 0,
     lifetimeThinkingTokens: 0,
@@ -117,6 +118,7 @@ try {
         const loadedData = JSON.parse(data);
         tokenTracking = loadedData;
         if (!tokenTracking.modelUsage) tokenTracking.modelUsage = {};
+        if (!tokenTracking.modelCosts) tokenTracking.modelCosts = {};
         if (!tokenTracking.modelUsage[BIGGER_MODEL]) tokenTracking.modelUsage[BIGGER_MODEL] = { input: 0, output: 0 };
         if (!tokenTracking.modelUsage[SMALLER_MODEL]) tokenTracking.modelUsage[SMALLER_MODEL] = { input: 0, output: 0 };
         console.log('Loaded token tracking data from file');
@@ -1293,6 +1295,7 @@ const resetTokenStats = () => {
             [BIGGER_MODEL]: { input: 0, output: 0 },
             [SMALLER_MODEL]: { input: 0, output: 0 }
         },
+        modelCosts: {},
         lifetimeCacheCreationInputTokens: 0,
         lifetimeCacheReadInputTokens: 0,
         lifetimeThinkingTokens: 0,
